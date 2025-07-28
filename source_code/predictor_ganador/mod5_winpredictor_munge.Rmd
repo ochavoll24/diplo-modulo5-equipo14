@@ -391,10 +391,10 @@ final_chess_munged_db <-
           white_id
           ,player_as_white_fav_opening_class = as_white_fav_opening_class
           ,player_as_white_fav_opening_eco = as_white_fav_opening_eco
-          ,player_as_white_winrate = as_white_winrate
-          ,player_as_white_games_count = as_white_games_count
+          #,player_as_white_winrate = as_white_winrate
+          #,player_as_white_games_count = as_white_games_count
           ,player_white_total_games_count = total_games_count
-          ,player_white_total_winrate = total_winrate
+          #,player_white_total_winrate = total_winrate
           #,white_last_elo = last_elo
           #,white_last_elo_band = last_elo_band
         )
@@ -404,16 +404,20 @@ final_chess_munged_db <-
       player_munged_db %>% 
         select(
           white_id
-          ,player_as_black_winrate = as_black_winrate
-          ,player_as_black_games_count = as_black_games_count
+          #,player_as_black_winrate = as_black_winrate
+          #,player_as_black_games_count = as_black_games_count
           ,player_black_total_games_count = total_games_count
-          ,player_black_total_winrate = total_winrate
+          #,player_black_total_winrate = total_winrate
           #,white_last_elo = last_elo
           #,white_last_elo_band = last_elo_band
         )
       ,by = c("black_id" = "white_id")
     ) %>% 
-    select(-white_id,-black_id)
+    select(
+      -white_id
+      ,-black_id
+      
+      )
   
 
 #hist(player_munged_db$white_first_check_turn)  
