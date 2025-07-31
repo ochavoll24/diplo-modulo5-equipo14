@@ -98,6 +98,15 @@ identify_chess_moves <- function(moves_string) {
   white_checks_limited_count <- 0
   black_checks_limited_count <- 0
   
+  white_loss_before_five <- 0
+  black_loss_before_five <- 0
+  
+  white_loss_before_ten <- 0
+  black_loss_before_ten <- 0
+  
+  white_loss_before_fifteen <- 0
+  black_loss_before_fifteen <- 0
+  
   #Check for castling moves (O-O for kingside, O-O-O for queenside)
   for (i in seq_along(white_moves)) {
     if (str_detect(white_moves[i], "^O-O(-O)?$")) {
@@ -140,6 +149,47 @@ identify_chess_moves <- function(moves_string) {
     }
   }
   
+  ## Capture or loss pieces _whites
+  
+  for (i in seq_along(white_moves)) {
+    if (i < 6 & str_detect(white_moves[i], "x")) {
+      black_loss_before_five <- black_loss_before_five + 1
+    }
+  }
+  
+  for (i in seq_along(white_moves)) {
+    if (i < 11 & str_detect(white_moves[i], "x")) {
+      black_loss_before_ten <- black_loss_before_ten + 1
+    }
+  }
+  
+  for (i in seq_along(white_moves)) {
+    if (i < 16 & str_detect(white_moves[i], "x")) {
+      black_loss_before_fifteen <- black_loss_before_fifteen + 1
+    }
+  }
+  
+  ## Capture or loss pieces _black
+  
+  for (i in seq_along(black_moves)) {
+    if (i < 6 & str_detect(black_moves[i], "x")) {
+      white_loss_before_five <- white_loss_before_five + 1
+    }
+  }
+  
+  for (i in seq_along(black_moves)) {
+    if (i < 11 & str_detect(black_moves[i], "x")) {
+      white_loss_before_ten <- white_loss_before_ten + 1
+    }
+  }
+  
+  for (i in seq_along(black_moves)) {
+    if (i < 16 & str_detect(black_moves[i], "x")) {
+      white_loss_before_fifteen <- white_loss_before_fifteen + 1
+    }
+  }
+  
+  
   #Check for check moves
   
   return(list(
@@ -150,8 +200,13 @@ identify_chess_moves <- function(moves_string) {
     white_first_check_turn = white_first_check_turn,
     black_first_check_turn = black_first_check_turn,
     white_checks_limited_count = white_checks_limited_count,
-    black_checks_limited_count = black_checks_limited_count
-    
+    black_checks_limited_count = black_checks_limited_count,
+    white_loss_before_five = white_loss_before_five,
+    white_loss_before_ten = white_loss_before_ten,
+    white_loss_before_fifteen = white_loss_before_fifteen,
+    black_loss_before_five = black_loss_before_five,
+    black_loss_before_ten = black_loss_before_ten,
+    black_loss_before_fifteen = black_loss_before_fifteen
     
   ))
 }
@@ -230,13 +285,13 @@ player_bcv <-
     mutate(
       last_elo = if_else(white_created_at >= black_created_at,as_white_elo,as_black_elo)
       ,last_elo_band = case_when(
-        last_elo <= 1200 ~ 'wood',
-        last_elo <= 1400 ~ 'bronze',
-        last_elo <= 1600 ~ 'silver',
-        last_elo <= 1800 ~ 'gold',
-        last_elo <= 2000 ~ 'platinum',
-        last_elo <= 2200 ~ 'titanium',
-        TRUE ~ 'master'
+        last_elo <= 1200 ~ 0,
+        last_elo <= 1400 ~ 1,
+        last_elo <= 1600 ~ 2,
+        last_elo <= 1800 ~ 3,
+        last_elo <= 2000 ~ 4,
+        last_elo <= 2200 ~ 5,
+        TRUE ~ 6
       )
     ) %>% 
     select(white_id,last_elo,last_elo_band) ## should we add the fav game style (most played) and which is the win rate in that game style?
@@ -294,63 +349,98 @@ write.csv(
 ## si la partida es de mayor, como predigo?
 
 
+# chess_db %>% 
+#   mutate(
+#     opening_class_letters = str_sub(opening_eco,1,1)  # clasifica aperturas A-flank, B-semi open, C-Open, D-closed, E-indian defence
+#     ,opening_class = case_when(
+#       opening_class_letters == 'A' ~ 0, 
+#       opening_class_letters == 'B' ~ 1, 
+#       opening_class_letters == 'C' ~ 2, 
+#       opening_class_letters == 'D' ~ 3, 
+#       opening_class_letters == 'E' ~ 4,
+#       TRUE ~ 5
+#     ),
+#     ,opening_eco_mod = as.numeric(paste(opening_class,str_sub(opening_eco,2,3),sep ='') )
+#   ) %>% View
 
 
 chess_munged_db <-
   chess_db %>% 
     filter(
-    rated == TRUE
-    & turns > 31
+   # rated == TRUE &
+     turns > 31
     & winner %in% c('white','black') #remove later?
-  ) %>% 
+  ) %>% ##head
     mutate(
       moves_analysis = map(moves,identify_chess_moves)
     ) %>% 
-    unnest_wider(moves_analysis) %>% 
-  tidyr::separate(increment_code, into = c("before_plus", "after_plus"), sep = "\\s*\\+\\s*", remove = FALSE) %>% 
+    unnest_wider(moves_analysis) %>%
+   tidyr::separate(increment_code, into = c("before_plus", "after_plus"), sep = "\\s*\\+\\s*", remove = FALSE) %>% 
   mutate(
-    opening_class = str_sub(opening_eco,1,1) # clasifica aperturas A-flank, B-semi open, C-Open, D-closed, E-indian defence
+    # winner = case_when(
+    #   winner == "white" ~ 0,
+    #   winner == "black" ~ 1,
+    #   TRUE ~ 2
+    # ),
+    opening_class_letters = str_sub(opening_eco,1,1)  # clasifica aperturas A-flank, B-semi open, C-Open, D-closed, E-indian defence
+    ,opening_class = case_when(
+      opening_class_letters == 'A' ~ 0, 
+      opening_class_letters == 'B' ~ 1, 
+      opening_class_letters == 'C' ~ 2, 
+      opening_class_letters == 'D' ~ 3, 
+      opening_class_letters == 'E' ~ 4,
+      TRUE ~ 5
+    ),
+    ,opening_eco_mod = as.numeric(paste(opening_class,str_sub(opening_eco,2,3),sep ='') )
     ,base_time = as.numeric(str_trim(before_plus))
     ,add_time = as.numeric(str_trim(after_plus))
-    ,total_time = base_time +(add_time* turns/60)
+    ,total_time = round(base_time +(add_time* turns/60),0)
     ,game_class = case_when( #basamos en base time ; summarise(.by = game_class, game_min = min(total_time),game_max = max(total_time)) 
-      base_time <3 ~ 'bullet',
-      base_time <11 ~ 'blitz',
-      base_time <31 ~ 'rapid',
-      base_time <181 ~ 'classical',
-      TRUE ~ 'other'
+      base_time <3 ~ 0,
+      base_time <11 ~ 1,
+      base_time <31 ~ 2,
+      base_time <181 ~ 3,
+      TRUE ~ 4
     )
     ,rating_dif = white_rating - black_rating
     ,white_elo_band = case_when(
-        white_rating <= 1200 ~ 'wood',
-        white_rating <= 1400 ~ 'bronze',
-        white_rating <= 1600 ~ 'silver',
-        white_rating <= 1800 ~ 'gold',
-        white_rating <= 2000 ~ 'platinum',
-        white_rating <= 2200 ~ 'titanium',
-        TRUE ~ 'master'
+        white_rating <= 1200 ~ 0,
+        white_rating <= 1400 ~ 1,
+        white_rating <= 1600 ~ 2,
+        white_rating <= 1800 ~ 3,
+        white_rating <= 2000 ~ 4,
+        white_rating <= 2200 ~ 5,
+        TRUE ~ 6
       )
     ,black_elo_band = case_when(
-        black_rating <= 1200 ~ 'wood',
-        black_rating <= 1400 ~ 'bronze',
-        black_rating <= 1600 ~ 'silver',
-        black_rating <= 1800 ~ 'gold',
-        black_rating <= 2000 ~ 'platinum',
-        black_rating <= 2200 ~ 'titanium',
-        TRUE ~ 'master'
+        black_rating <= 1200 ~ 0,
+        black_rating <= 1400 ~ 1,
+        black_rating <= 1600 ~ 2,
+        black_rating <= 1800 ~ 3,
+        black_rating <= 2000 ~ 4,
+        black_rating <= 2200 ~ 5,
+        TRUE ~ 6
       )
     ,same_elo_band_flag = if_else(white_elo_band == black_elo_band,1,0 )
     ,same_elo_step_flag = if_else(abs(rating_dif) <200,1,0 )
+    
     ,white_castle_turn_limited = if_else(is.na(white_castle_turn),0, if_else(white_castle_turn<= 15, white_castle_turn,NA)) 
+    ,white_castle_before_five = if_else(is.na(white_castle_turn),0, if_else(white_castle_turn<= 5, 1,0)) 
     ,white_castle_before_ten = if_else(is.na(white_castle_turn),0, if_else(white_castle_turn<= 10, 1,0)) 
     ,white_castle_before_fifteen = if_else(is.na(white_castle_turn),0, if_else(white_castle_turn<= 15, 1,0)) 
     
+    ,black_castle_turn_limited = if_else(is.na(black_castle_turn),0, if_else(black_castle_turn<= 15, black_castle_turn,NA)) 
+    ,black_castle_before_five = if_else(is.na(black_castle_turn),0, if_else(black_castle_turn<= 5, 1,0)) 
     ,black_castle_before_ten = if_else(is.na(black_castle_turn),0, if_else(black_castle_turn<= 10, 1,0)) 
     ,black_castle_before_fifteen = if_else(is.na(black_castle_turn),0, if_else(black_castle_turn<= 15, 1,0)) 
-    ,black_castle_turn_limited = if_else(is.na(black_castle_turn),0, if_else(black_castle_turn<= 15, black_castle_turn,NA)) 
     
     ,white_checks_before_fifteen = if_else(is.na(white_first_check_turn),0, if_else(white_first_check_turn<= 15, 1,0)) 
+    ,white_checks_before_ten = if_else(is.na(white_first_check_turn),0, if_else(white_first_check_turn<= 10, 1,0)) 
+    ,white_checks_before_five = if_else(is.na(white_first_check_turn),0, if_else(white_first_check_turn<= 5, 1,0)) 
+    
     ,black_checks_before_fifteen = if_else(is.na(black_first_check_turn),0, if_else(black_first_check_turn<= 15, 1,0))
+    ,black_checks_before_ten = if_else(is.na(black_first_check_turn),0, if_else(black_first_check_turn<= 10, 1,0))
+    ,black_checks_before_five = if_else(is.na(black_first_check_turn),0, if_else(black_first_check_turn<= 5, 1,0))
     
     
   ) #%>% glimpse   # head(n =10)    #skim()  #group_by(total_time) %>% tally %>% arrange(desc(total_time))
@@ -364,26 +454,42 @@ final_chess_munged_db <-
       ,black_id
       ,winner
       ,base_time
+      ,add_time
+      ,total_time
       ,game_class
       ,opening_class
-      ,opening_eco
+      ,opening_eco_mod
       ,rating_dif
       ,same_elo_band_flag
       ,same_elo_step_flag
 
       ,white_elo_band
       ,white_castle_turn_limited
+      ,white_castle_before_five
       ,white_castle_before_ten
       ,white_castle_before_fifteen
       ,white_checks_limited_count
+      ,white_checks_before_five
+      ,white_checks_before_ten
       ,white_checks_before_fifteen
+      ,white_loss_before_five
+      ,white_loss_before_ten
+      ,white_loss_before_fifteen
       
       ,black_elo_band
       ,black_castle_turn_limited
+      ,black_castle_before_five
       ,black_castle_before_ten
       ,black_castle_before_fifteen
+      ,black_checks_before_five
+      ,black_checks_before_ten
       ,black_checks_before_fifteen
       ,black_checks_limited_count
+      ,black_loss_before_five
+      ,black_loss_before_ten
+      ,black_loss_before_fifteen
+      
+      
     ) %>% 
     left_join(
       player_munged_db %>%
@@ -438,4 +544,9 @@ write.csv(
 
 ```
 
+
+```{r}
+final_chess_munged_db %>% 
+  group_by(game_class) %>% tally
+```
 
