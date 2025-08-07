@@ -1,0 +1,770 @@
+---
+title: "Proyecto final módulo 5 - Win Predictor - manipulacion de base de datos"
+author: "Alexis_Oscar"
+output: html_document:
+  theme:journal
+  toc:true
+  toc:true
+  toc_float:
+    collapsed:true
+    
+---
+
+# initial
+
+Objective: Chess Game Outcome Predictor
+Build a model that predicts the winner (White/Black/Draw) based on the first 10-15 moves of a game. Use features like opening type, player rating difference, time control, and move quality scores. This could help players understand critical early-game positions and their winning probabilities.
+ML Approach: Classification using Random Forest, XGBoost, or Neural Networks
+Features: Opening ECO codes, rating gaps, move timestamps, piece development metrics
+
+
+```{r}
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(skimr)
+library(lubridate)
+library(stringr)
+library(tidyr)
+#library(tidyverse) #
+library(purrr)
+library(stringi)
+
+
+options(scipen = 999)
+
+```
+
+# loads
+
+## load data 
+
+```{r}
+chess_db <- 
+  readr::read_csv("games.csv") %>% 
+  group_by(id) %>% 
+  mutate(row_index = row_number()) %>% 
+  ungroup %>% 
+  filter(row_index == 1)
+
+head(chess_db)
+```
+
+## skim db
+
+```{r}
+
+chess_db %>% glimpse
+
+chess_db %>% 
+skim() %>% 
+    tibble::as_tibble() 
+
+```
+
+## tests 
+```{r}
+
+chess_db %>% 
+  filter(rated==TRUE) %>% 
+#  mutate(opening_class = str_sub(opening_eco,1,1)) %>% 
+  group_by( increment_code) %>% tally %>% arrange(desc(n))
+
+chess_db %>% 
+  filter(id =='QurxyQkA')
+```
+
+## ad-hoc functions
+
+```{r}
+
+identify_chess_moves <- function(moves_string) {
+  # Split moves by whitespace
+  moves <- str_split(moves_string, "\\s+")[[1]]
+  
+  # Remove empty strings
+  moves <- moves[moves != ""]
+  
+  # Separate white and black moves
+  white_moves <- moves[seq(1, length(moves), 2)]  # Odd positions (1, 3, 5, ...)
+  black_moves <- moves[seq(2, length(moves), 2)]  # Even positions (2, 4, 6, ...)
+  
+  #Find  turns
+  white_castle_turn <- NA
+  black_castle_turn <- NA
+  
+  white_first_check_turn <- NA
+  black_first_check_turn <- NA
+  
+  white_checks_limited_count <- 0
+  black_checks_limited_count <- 0
+  
+  white_loss_before_five <- 0
+  black_loss_before_five <- 0
+  
+  white_loss_before_ten <- 0
+  black_loss_before_ten <- 0
+  
+  white_loss_before_fifteen <- 0
+  black_loss_before_fifteen <- 0
+  
+  #Check for castling moves (O-O for kingside, O-O-O for queenside)
+  for (i in seq_along(white_moves)) {
+    if (str_detect(white_moves[i], "^O-O(-O)?$")) {
+      white_castle_turn <- i
+      break
+    }
+  }
+
+  for (i in seq_along(black_moves)) {
+    if (str_detect(black_moves[i], "^O-O(-O)?$")) {
+      black_castle_turn <- i
+      break
+    }
+  }
+  
+  for (i in seq_along(white_moves)) {
+    if (str_detect(white_moves[i], "\\+")) {
+      white_first_check_turn <- i
+      break
+    }
+  }
+
+  for (i in seq_along(black_moves)) {
+    if (str_detect(black_moves[i], "\\+")) {
+      black_first_check_turn <- i
+      break
+    }
+  }
+  
+  
+  for (i in seq_along(white_moves)) {
+    if (i < 16 & str_detect(white_moves[i], "\\+")) {
+      white_checks_limited_count <- white_checks_limited_count + 1
+    }
+  }
+  
+  for (i in seq_along(black_moves)) {
+    if (i < 16 & str_detect(black_moves[i], "\\+")) {
+      black_checks_limited_count <- black_checks_limited_count + 1
+    }
+  }
+  
+  ## Capture or loss pieces _whites
+  
+  for (i in seq_along(white_moves)) {
+    if (i < 6 & str_detect(white_moves[i], "x")) {
+      black_loss_before_five <- black_loss_before_five + 1
+    }
+  }
+  
+  for (i in seq_along(white_moves)) {
+    if (i < 11 & str_detect(white_moves[i], "x")) {
+      black_loss_before_ten <- black_loss_before_ten + 1
+    }
+  }
+  
+  for (i in seq_along(white_moves)) {
+    if (i < 16 & str_detect(white_moves[i], "x")) {
+      black_loss_before_fifteen <- black_loss_before_fifteen + 1
+    }
+  }
+  
+  ## Capture or loss pieces _black
+  
+  for (i in seq_along(black_moves)) {
+    if (i < 6 & str_detect(black_moves[i], "x")) {
+      white_loss_before_five <- white_loss_before_five + 1
+    }
+  }
+  
+  for (i in seq_along(black_moves)) {
+    if (i < 11 & str_detect(black_moves[i], "x")) {
+      white_loss_before_ten <- white_loss_before_ten + 1
+    }
+  }
+  
+  for (i in seq_along(black_moves)) {
+    if (i < 16 & str_detect(black_moves[i], "x")) {
+      white_loss_before_fifteen <- white_loss_before_fifteen + 1
+    }
+  }
+  
+  
+  #Check for check moves
+  
+  return(list(
+    white_moves = paste(white_moves, collapse = " "),
+    black_moves = paste(black_moves, collapse = " "),
+    white_castle_turn = white_castle_turn,
+    black_castle_turn = black_castle_turn,
+    white_first_check_turn = white_first_check_turn,
+    black_first_check_turn = black_first_check_turn,
+    white_checks_limited_count = white_checks_limited_count,
+    black_checks_limited_count = black_checks_limited_count,
+    white_loss_before_five = white_loss_before_five,
+    white_loss_before_ten = white_loss_before_ten,
+    white_loss_before_fifteen = white_loss_before_fifteen,
+    black_loss_before_five = black_loss_before_five,
+    black_loss_before_ten = black_loss_before_ten,
+    black_loss_before_fifteen = black_loss_before_fifteen
+    
+  ))
+}
+
+
+```
+
+ 
+# final munged
+ 
+## players db 
+
+```{r}
+
+#queremos quedarnos solo con rated? esto significa que esta partida afecta el ELO o el rating del jugador; creo que es un si? 	TRU: 16155, FAL: 3903
+
+whites_db <-
+  chess_db %>% 
+  summarise(
+    .by = c(white_id)
+    , as_white_games_count = n()
+    , as_white_wins = sum(if_else(winner == 'white',1,0),na.rm=T )
+    , as_white_loss = sum(if_else(winner == 'black',1,0),na.rm=T )
+    , as_white_draw = sum(if_else(winner == 'draw',1,0),na.rm=T )
+  ) %>% 
+  left_join(
+    chess_db %>% 
+      mutate(opening_class = str_sub(opening_eco,1,1)) %>% 
+      summarise(.by = c(white_id,opening_class), moves = n()) %>% 
+      group_by(white_id) %>% 
+      arrange(desc(moves)) %>% 
+      mutate(row_index = row_number()) %>% ungroup %>%
+      filter(row_index == 1) %>% 
+      select(white_id,as_white_fav_opening_class = opening_class)
+  ) %>% 
+  left_join(
+    chess_db %>% 
+      mutate(opening_class = str_sub(opening_eco,1,1)) %>% 
+      summarise(.by = c(white_id,opening_eco), moves = n()) %>% 
+      group_by(white_id) %>% 
+      arrange(desc(moves)) %>% 
+      mutate(row_index = row_number()) %>% ungroup %>%
+      filter(row_index == 1) %>% 
+      select(white_id,as_white_fav_opening_eco = opening_eco)
+  )
+  
+
+blacks_db <-
+  chess_db %>% 
+  summarise(
+    .by = c(black_id)
+    , as_black_games_count = n()
+    , as_black_wins = sum(if_else(winner == 'black',1,0),na.rm=T )
+    , as_black_loss = sum(if_else(winner == 'white',1,0),na.rm=T )
+    , as_black_draw = sum(if_else(winner == 'draw',1,0),na.rm=T )
+  ) 
+
+
+player_bcv <-
+  chess_db %>% 
+      group_by(white_id) %>% 
+      arrange(desc(created_at)) %>% 
+      mutate(row_index = row_number()) %>% ungroup %>%
+      filter(row_index == 1) %>% 
+      select(white_id,as_white_elo = white_rating,white_created_at = created_at) %>% 
+  full_join(
+      chess_db %>% 
+      group_by(black_id) %>% 
+      arrange(desc(created_at)) %>% 
+      mutate(row_index = row_number()) %>% ungroup %>%
+      filter(row_index == 1) %>% 
+      select(black_id , as_black_elo = black_rating , black_created_at = created_at) 
+      ,by = c("white_id"= "black_id")
+      ) %>% 
+    mutate(across(where(is.numeric), ~tidyr::replace_na(.x, 0))) %>% 
+    mutate(
+      last_elo = if_else(white_created_at >= black_created_at,as_white_elo,as_black_elo)
+      ,last_elo_band = case_when(
+        last_elo <= 1200 ~ 0,
+        last_elo <= 1400 ~ 1,
+        last_elo <= 1600 ~ 2,
+        last_elo <= 1800 ~ 3,
+        last_elo <= 2000 ~ 4,
+        last_elo <= 2200 ~ 5,
+        TRUE ~ 6
+      )
+    ) %>% 
+    select(white_id,last_elo,last_elo_band) ## should we add the fav game style (most played) and which is the win rate in that game style?
+
+player_munged_db<-
+  whites_db %>% 
+    full_join(
+      blacks_db,
+      by = c("white_id"= "black_id")
+      ) %>% 
+    mutate(across(where(is.numeric), ~tidyr::replace_na(.x, 0))) %>% 
+    mutate(
+       total_games_count = as_white_games_count + as_black_games_count
+      ,total_wins = as_white_wins + as_black_wins
+      ,total_loss = as_white_loss + as_black_loss
+      ,total_draw = as_white_draw + as_black_draw
+      ,as_white_winrate = if_else(as_white_games_count==0,0,round(as_white_wins/as_white_games_count,8))
+      ,as_black_winrate = if_else(as_black_games_count==0,0,round(as_black_wins/as_black_games_count,8))
+      ,total_winrate = if_else(total_games_count==0,0,round(total_wins/total_games_count,8))
+    ) %>% 
+  left_join(
+    player_bcv
+  ) ## do we need a band for total games played?
+  
+
+player_munged_db %>% 
+  arrange(desc(total_games_count))
+
+#how do we define ??
+
+write.csv(
+  player_munged_db,
+  "player_munged_db.csv",
+  row.names = F
+)
+
+```
+ 
+
+## main db 
+
+
+```{r}
+
+#desduplicamos los id al principio, nos quedamos con 19,113
+
+#queremos quedarnos solo con rated? esto significa que esta partida afecta el ELO o el rating del jugador; creo que es un si? 80% TRU: 15467, FAL: 3646
+
+#queremos quedarnos con alguna banda de total de jugadas? mas de 5 partidas? para mi es en uno
+
+# queremos quitar partidas de mas de x horas? y quitar que duran menos de x horas? estaba pensando que necesitamos al menos 32 turnos, 16 turnos cada quien.
+
+# Preguntas a resolver
+## si la partida es blitz, o bullet, con menos de 20 movimientos total? como predigo
+## si la partida es de mayor, como predigo?
+
+
+# chess_db %>% 
+#   mutate(
+#     opening_class_letters = str_sub(opening_eco,1,1)  # clasifica aperturas A-flank, B-semi open, C-Open, D-closed, E-indian defence
+#     ,opening_class = case_when(
+#       opening_class_letters == 'A' ~ 0, 
+#       opening_class_letters == 'B' ~ 1, 
+#       opening_class_letters == 'C' ~ 2, 
+#       opening_class_letters == 'D' ~ 3, 
+#       opening_class_letters == 'E' ~ 4,
+#       TRUE ~ 5
+#     ),
+#     ,opening_eco_mod = as.numeric(paste(opening_class,str_sub(opening_eco,2,3),sep ='') )
+#   ) %>% View
+
+
+chess_munged_db <-
+  chess_db %>% 
+    filter(
+   # rated == TRUE &
+     turns > 31
+    & winner %in% c('white','black') #remove later?
+  ) %>% ##head
+    mutate(
+      moves_analysis = map(moves,identify_chess_moves)
+    ) %>% 
+    unnest_wider(moves_analysis) %>%
+   tidyr::separate(increment_code, into = c("before_plus", "after_plus"), sep = "\\s*\\+\\s*", remove = FALSE) %>% 
+  mutate(
+    # winner = case_when(
+    #   winner == "white" ~ 0,
+    #   winner == "black" ~ 1,
+    #   TRUE ~ 2
+    # ),
+    opening_class_letters = str_sub(opening_eco,1,1)  # clasifica aperturas A-flank, B-semi open, C-Open, D-closed, E-indian defence
+    ,opening_class = case_when(
+      opening_class_letters == 'A' ~ 0, 
+      opening_class_letters == 'B' ~ 1, 
+      opening_class_letters == 'C' ~ 2, 
+      opening_class_letters == 'D' ~ 3, 
+      opening_class_letters == 'E' ~ 4,
+      TRUE ~ 5
+    ),
+    ,opening_eco_mod = as.numeric(paste(opening_class,str_sub(opening_eco,2,3),sep ='') )
+    ,base_time = as.numeric(str_trim(before_plus))
+    ,add_time = as.numeric(str_trim(after_plus))
+    ,total_time = round(base_time +(add_time* turns/60),0)
+    ,game_class = case_when( #basamos en base time ; summarise(.by = game_class, game_min = min(total_time),game_max = max(total_time)) 
+      base_time <3 ~ 0,
+      base_time <11 ~ 1,
+      base_time <31 ~ 2,
+      base_time <181 ~ 3,
+      TRUE ~ 4
+    )
+    ,rating_dif = white_rating - black_rating
+    ,white_elo_band = case_when(
+        white_rating <= 1200 ~ 0,
+        white_rating <= 1400 ~ 1,
+        white_rating <= 1600 ~ 2,
+        white_rating <= 1800 ~ 3,
+        white_rating <= 2000 ~ 4,
+        white_rating <= 2200 ~ 5,
+        TRUE ~ 6
+      )
+    ,black_elo_band = case_when(
+        black_rating <= 1200 ~ 0,
+        black_rating <= 1400 ~ 1,
+        black_rating <= 1600 ~ 2,
+        black_rating <= 1800 ~ 3,
+        black_rating <= 2000 ~ 4,
+        black_rating <= 2200 ~ 5,
+        TRUE ~ 6
+      )
+    ,same_elo_band_flag = if_else(white_elo_band == black_elo_band,1,0 )
+    ,same_elo_step_flag = if_else(abs(rating_dif) <200,1,0 )
+    
+    ,white_castle_turn_limited = if_else(is.na(white_castle_turn),0, if_else(white_castle_turn<= 15, white_castle_turn,NA)) 
+    ,white_castle_before_five = if_else(is.na(white_castle_turn),0, if_else(white_castle_turn<= 5, 1,0)) 
+    ,white_castle_before_ten = if_else(is.na(white_castle_turn),0, if_else(white_castle_turn<= 10, 1,0)) 
+    ,white_castle_before_fifteen = if_else(is.na(white_castle_turn),0, if_else(white_castle_turn<= 15, 1,0)) 
+    
+    ,black_castle_turn_limited = if_else(is.na(black_castle_turn),0, if_else(black_castle_turn<= 15, black_castle_turn,NA)) 
+    ,black_castle_before_five = if_else(is.na(black_castle_turn),0, if_else(black_castle_turn<= 5, 1,0)) 
+    ,black_castle_before_ten = if_else(is.na(black_castle_turn),0, if_else(black_castle_turn<= 10, 1,0)) 
+    ,black_castle_before_fifteen = if_else(is.na(black_castle_turn),0, if_else(black_castle_turn<= 15, 1,0)) 
+    
+    ,white_checks_before_fifteen = if_else(is.na(white_first_check_turn),0, if_else(white_first_check_turn<= 15, 1,0)) 
+    ,white_checks_before_ten = if_else(is.na(white_first_check_turn),0, if_else(white_first_check_turn<= 10, 1,0)) 
+    ,white_checks_before_five = if_else(is.na(white_first_check_turn),0, if_else(white_first_check_turn<= 5, 1,0)) 
+    
+    ,black_checks_before_fifteen = if_else(is.na(black_first_check_turn),0, if_else(black_first_check_turn<= 15, 1,0))
+    ,black_checks_before_ten = if_else(is.na(black_first_check_turn),0, if_else(black_first_check_turn<= 10, 1,0))
+    ,black_checks_before_five = if_else(is.na(black_first_check_turn),0, if_else(black_first_check_turn<= 5, 1,0))
+    
+    
+  ) #%>% glimpse   # head(n =10)    #skim()  #group_by(total_time) %>% tally %>% arrange(desc(total_time))
+
+
+final_chess_munged_db <-
+  chess_munged_db %>% 
+    select(
+       id
+      ,white_id
+      ,black_id
+      ,winner
+      ,base_time
+      ,add_time
+      ,total_time
+      ,game_class
+      ,opening_class
+      ,opening_eco_mod
+      ,rating_dif
+      ,same_elo_band_flag
+      ,same_elo_step_flag
+
+      ,white_elo_band
+      ,white_castle_turn_limited
+      ,white_castle_before_five
+      ,white_castle_before_ten
+      ,white_castle_before_fifteen
+      ,white_checks_limited_count
+      ,white_checks_before_five
+      ,white_checks_before_ten
+      ,white_checks_before_fifteen
+      ,white_loss_before_five
+      ,white_loss_before_ten
+      ,white_loss_before_fifteen
+      
+      ,black_elo_band
+      ,black_castle_turn_limited
+      ,black_castle_before_five
+      ,black_castle_before_ten
+      ,black_castle_before_fifteen
+      ,black_checks_before_five
+      ,black_checks_before_ten
+      ,black_checks_before_fifteen
+      ,black_checks_limited_count
+      ,black_loss_before_five
+      ,black_loss_before_ten
+      ,black_loss_before_fifteen
+      
+      
+    ) %>% 
+    left_join(
+      player_munged_db %>%
+        select(
+          white_id
+          ,player_as_white_fav_opening_class = as_white_fav_opening_class
+          ,player_as_white_fav_opening_eco = as_white_fav_opening_eco
+          #,player_as_white_winrate = as_white_winrate
+          #,player_as_white_games_count = as_white_games_count
+          ,player_white_total_games_count = total_games_count
+          #,player_white_total_winrate = total_winrate
+          #,white_last_elo = last_elo
+          #,white_last_elo_band = last_elo_band
+        )
+      ,by = c("white_id" = "white_id")
+    ) %>% 
+    left_join(
+      player_munged_db %>% 
+        select(
+          white_id
+          #,player_as_black_winrate = as_black_winrate
+          #,player_as_black_games_count = as_black_games_count
+          ,player_black_total_games_count = total_games_count
+          #,player_black_total_winrate = total_winrate
+          #,white_last_elo = last_elo
+          #,white_last_elo_band = last_elo_band
+        )
+      ,by = c("black_id" = "white_id")
+    ) %>% 
+    select(
+      -white_id
+      ,-black_id
+      
+      )
+  
+
+#hist(player_munged_db$white_first_check_turn)  
+
+
+## how many checks? first check who? first check at which move?
+##do we want bands for turns? or game bands are enough?
+
+
+#que le pegamos de player?
+
+
+write.csv(
+  final_chess_munged_db,
+  "final_chess_munged_db.csv",
+  row.names = F
+)
+
+```
+
+
+
+
+
+## DB for modeling without feature engineering. 
+
+
+```{r}
+
+#desduplicamos los id al principio, nos quedamos con 19,113
+
+#queremos quedarnos solo con rated? esto significa que esta partida afecta el ELO o el rating del jugador; creo que es un si? 80% TRU: 15467, FAL: 3646
+
+#queremos quedarnos con alguna banda de total de jugadas? mas de 5 partidas? para mi es en uno
+
+# queremos quitar partidas de mas de x horas? y quitar que duran menos de x horas? estaba pensando que necesitamos al menos 32 turnos, 16 turnos cada quien.
+
+# Preguntas a resolver
+## si la partida es blitz, o bullet, con menos de 20 movimientos total? como predigo
+## si la partida es de mayor, como predigo?
+
+
+# chess_db %>% 
+#   mutate(
+#     opening_class_letters = str_sub(opening_eco,1,1)  # clasifica aperturas A-flank, B-semi open, C-Open, D-closed, E-indian defence
+#     ,opening_class = case_when(
+#       opening_class_letters == 'A' ~ 0, 
+#       opening_class_letters == 'B' ~ 1, 
+#       opening_class_letters == 'C' ~ 2, 
+#       opening_class_letters == 'D' ~ 3, 
+#       opening_class_letters == 'E' ~ 4,
+#       TRUE ~ 5
+#     ),
+#     ,opening_eco_mod = as.numeric(paste(opening_class,str_sub(opening_eco,2,3),sep ='') )
+#   ) %>% View
+
+
+chess_munged_db <-
+  chess_db %>% 
+   filter(
+     winner %in% c('white','black') #remove later?
+     # & rated == TRUE 
+     # & turns > 31
+  ) %>% 
+  tidyr::separate(increment_code, into = c("before_plus", "after_plus"), sep = "\\s*\\+\\s*", remove = FALSE) %>% 
+  mutate(
+     rated = as.numeric(rated)
+     ,rating_dif_abs = abs(white_rating - black_rating)
+     ,rating_dif_class = case_when(
+       white_rating - black_rating >10 ~ 1,
+       black_rating - white_rating >10 ~ -1,
+       TRUE ~ 0
+     )
+    # ,rating_dif_winner = case_when(   ## this implies we know who the winner is
+    #   winner == 'white' ~ white_rating - black_rating,
+    #   winner == 'black' ~ black_rating - white_rating,
+    #   TRUE ~ NA
+    # )
+    ,opening_class_letters = str_sub(opening_eco,1,1)  # clasifica aperturas A-flank, B-semi open, C-Open, D-closed, E-indian defence
+    ,opening_class = case_when(
+      opening_class_letters == 'A' ~ 0, 
+      opening_class_letters == 'B' ~ 1, 
+      opening_class_letters == 'C' ~ 2, 
+      opening_class_letters == 'D' ~ 3, 
+      opening_class_letters == 'E' ~ 4,
+      TRUE ~ 5
+    ),
+    ,opening_eco_mod = as.numeric(paste(opening_class,str_sub(opening_eco,2,3),sep ='') )
+    ,base_time = as.numeric(str_trim(before_plus))
+    ,add_time = as.numeric(str_trim(after_plus))
+    ,total_time = round(base_time +(add_time* turns/60),0)
+    ,victory_status_class = case_when(
+      victory_status == 'mate' ~ 1,
+      victory_status == 'resign' ~ 0,
+      victory_status == 'outoftime' ~ 0,
+    )
+  ) %>% 
+  select(
+    id
+    ,winner
+    ,rated 
+    ,victory_status_class
+    ,base_time
+    ,add_time
+    ,total_time
+    ,white_rating
+    ,black_rating
+    ,rating_dif_abs
+    ,rating_dif_class
+    ,opening_class
+    ,opening_eco_mod
+    ,opening_ply
+  ) 
+  
+
+#hist(player_munged_db$white_first_check_turn)  
+
+
+write.csv(
+  chess_munged_db,
+  "basic_chess_munged_db.csv",
+  row.names = F
+)
+
+```
+
+## DB for modeling with some data wrangling on the current columns
+
+```{r}
+
+chess_munged_db <-
+  chess_db %>% 
+    filter(
+       winner %in% c('white','black') 
+   # rated == TRUE &
+   #  turns > 31
+  ) %>% 
+   tidyr::separate(increment_code, into = c("before_plus", "after_plus"), sep = "\\s*\\+\\s*", remove = FALSE) %>% 
+  mutate(
+    rated = as.numeric(rated)
+    ,opening_class_letters = str_sub(opening_eco,1,1)  # clasifica aperturas A-flank, B-semi open, C-Open, D-closed, E-indian defence
+    ,opening_class = case_when(
+      opening_class_letters == 'A' ~ 0, 
+      opening_class_letters == 'B' ~ 1, 
+      opening_class_letters == 'C' ~ 2, 
+      opening_class_letters == 'D' ~ 3, 
+      opening_class_letters == 'E' ~ 4,
+      TRUE ~ 5
+    ),
+    victory_status_class = case_when(
+      victory_status == 'mate' ~ 1,
+      victory_status == 'resign' ~ 0,
+      victory_status == 'outoftime' ~ 0,
+    )
+    ,opening_eco_mod = as.numeric(paste(opening_class,str_sub(opening_eco,2,3),sep ='') )
+    ,base_time = as.numeric(str_trim(before_plus))
+    ,add_time = as.numeric(str_trim(after_plus))
+    ,total_time = round(base_time +(add_time* turns/60),0)
+    ,game_class = case_when( #basamos en base time ; summarise(.by = game_class, game_min = min(total_time),game_max = max(total_time)) 
+      base_time <3 ~ 0,
+      base_time <11 ~ 1,
+      base_time <31 ~ 2,
+      base_time <181 ~ 3,
+      TRUE ~ 4
+    )
+    ,rating_dif_abs = abs(white_rating - black_rating)
+     ,rating_dif_class = case_when(
+       white_rating - black_rating >10 ~ 1,
+       black_rating - white_rating >10 ~ -1,
+       TRUE ~ 0
+     )
+    # ,rating_dif_winner = case_when(   ## this implies we know who the winner is
+    #   winner == 'white' ~ white_rating - black_rating,
+    #   winner == 'black' ~ black_rating - white_rating,
+    #   TRUE ~ NA
+    # )
+    ,white_elo_band = case_when(
+        white_rating <= 1200 ~ 0,
+        white_rating <= 1400 ~ 1,
+        white_rating <= 1600 ~ 2,
+        white_rating <= 1800 ~ 3,
+        white_rating <= 2000 ~ 4,
+        white_rating <= 2200 ~ 5,
+        TRUE ~ 6
+      )
+    ,black_elo_band = case_when(
+        black_rating <= 1200 ~ 0,
+        black_rating <= 1400 ~ 1,
+        black_rating <= 1600 ~ 2,
+        black_rating <= 1800 ~ 3,
+        black_rating <= 2000 ~ 4,
+        black_rating <= 2200 ~ 5,
+        TRUE ~ 6
+      )
+    ,same_elo_band_flag = if_else(white_elo_band == black_elo_band,1,0 )
+    ,same_elo_step_flag = if_else(abs(rating_dif_abs) <100,1,0 )
+    ) 
+
+
+final_chess_munged_db <-
+  chess_munged_db %>% 
+    select(
+     id
+    ,winner
+    ,rated 
+    ,victory_status_class
+    ,base_time
+    ,add_time
+    ,total_time
+    ,white_rating
+    ,black_rating
+    ,rating_dif_abs
+    ,rating_dif_class
+    ,opening_class
+    ,opening_eco_mod
+    ,opening_ply
+      ,game_class
+      ,same_elo_band_flag
+      ,same_elo_step_flag
+      ,white_elo_band
+      ,black_elo_band
+    ) 
+  
+
+#hist(player_munged_db$white_first_check_turn)  
+
+
+write.csv(
+  final_chess_munged_db,
+  "altered_chess_munged_db.csv",
+  row.names = F
+)
+
+```
+
+
+
+
+```{r}
+final_chess_munged_db %>% 
+  group_by(game_class) %>% tally
+```
+
