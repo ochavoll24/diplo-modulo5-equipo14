@@ -1,5 +1,5 @@
 ---
-title: "Tarea 1: Reducción de dimención usando PCA, t-SNE y UMAP"
+title: "Tarea 1: Reducción de dimensión usando PCA, t-SNE y UMAP"
 author: "Equipo 9 - Aprendizaje no supervisado"
 date: "2025-08-22"
 output: html_document
@@ -77,7 +77,7 @@ options(scipen = 999)
 
 # Introducción.
 
-Esta es una breve introducción a reducción de dimención
+Esta es una breve introducción a reducción de dimensión
 
 ### Análisis exploratorio de Datos
 
@@ -244,7 +244,7 @@ ggplot() +
   labs(title = "Loan Approval dataset: UMAP2 vs. UMAP3")
 ```
 
-Al incrementar la demension, observamos una mejor separación de la variable respuesta. Esto nos indica que la estructura de los datos es compleja y la reducción a dos dimenciones no la logra capturar completamente.
+Al incrementar la demension, observamos una mejor separación de la variable respuesta. Esto nos indica que la estructura de los datos es compleja y la reducción a dos dimensiones no la logra capturar completamente.
 
 Por último, para entender mejor esta estructura, mostramos el top 10 de correlaciones entre los features y los 3 componentes de UMAP. Utilizamos el caso min_dist = 0.1 y n_neighbors = 30.
 
