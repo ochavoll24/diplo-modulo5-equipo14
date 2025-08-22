@@ -1,0 +1,343 @@
+---
+title: "Tarea 1: Reducción de dimención usando PCA, t-SNE y UMAP"
+author: "Equipo 9 - Aprendizaje no supervisado"
+date: "2025-08-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+## Libraries 
+
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(skimr)
+library(lubridate)
+library(stringr)
+library(tidyr)
+#library(tidyverse) #
+library(purrr)
+library(stringi)
+
+### PCA libraries
+
+#library(tidymodels)
+library(broom)
+library(tidytext)
+library(recipes)
+
+
+library(knitr)
+library(kableExtra)
+library(GGally)
+library(psych)
+
+library(Hmisc)
+#library(autoplot)
+
+#library(rgl)
+library(plotly)
+library(ggforce)
+library(FactoMineR)  
+library(factoextra)
+library(ggcorrplot) #correlation plots
+library(rstatix) #prueba de bartlet?
+library(ggfortify) # extends autoplot to admin stats output variables
+library(forcats) #  changes the order ## used in code order of levels by the order in which they appear
+#library(ggord)
+
+library(tidymodels)
+library(embed)        
+library(tune)
+library(dials)
+library(FNN)
+library(cluster)
+library(uwot)
+
+
+library(patchwork)    
+library(corrplot)     
+library(data.table)
+library(scattermore)
+library(corrr)
+
+theme_set(theme_bw(16))
+
+
+options(scipen = 999)
+
+# Functions
+
+## Here for the functions
+
+
+```
+
+# Introducción.
+
+Esta es una breve introducción a reducción de dimención
+
+### Análisis exploratorio de Datos
+
+
+# Objetivo
+
+Este es un breve texto planteando el objetivo
+
+
+# Ejección de Modelos
+
+Este es un breve texto para hablar de esta sección 
+
+
+###  Modelo PCA
+
+Copiar aquí el código del modelo
+
+
+###  Modelo t-SNE
+
+Copiar aquí el código del modelo
+
+
+###  Modelo UMAP
+
+Copiar aquí el código del modelo
+
+### Modelo UMAP con 3 dimensiones
+
+Con las conclusiones del modelo simple, intentamos la variante de 3 dimensiones para entender si en algún otro corte de las 3 variables el modelo UMAP lograba consolidar mejor la variable respuesta. Para este ejercicio, removimos la variable "income_annum" que es la principal correlacionada con la aprobación del crédito.
+
+#### Validación cruzada
+
+Elegimos algúnos parametros cercanos a los que observamos del modelo simple, utilizando la distancia euclidiana:
+n_neighbors = c(15, 20, 30)
+min_dist = c(0.05, 0.075, 0.1)
+
+```{r include=FALSE}
+
+loan_scaled <- 
+  readr::read_csv("loan_approval_dataset.csv") %>% 
+  select(-education,-self_employed, -income_annum) %>%
+  mutate( across(where(is.numeric), scale) ) 
+  
+
+
+df <-loan_scaled
+
+umap_params = expand.grid(n_neighbors = c(15, 20, 30) , min_dist = c(0.05, 0.075, 0.1)   ) #c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 0.75, 1.1)
+
+#umap_params = expand.grid(n_neighbors = c(3, 5, 8, 12, 20, 30) , min_dist = c(0.001, 0.005, 0.01, 0.05, 0.1)   ) #c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 
+
+#umap_params = expand.grid(n_neighbors = c(10),min_dist = c(0.5))
+
+umaps = lapply(seq(nrow(umap_params)), function(i) {
+    emb = umap(
+      X = df[,-1],
+      n_components = 3,
+      metric = "euclidean",  #manhattan hamming
+      n_neighbors = umap_params$n_neighbors[i],
+      min_dist  = umap_params$min_dist[i]
+      )
+
+  return(emb)
+})
+
+d = rbindlist(lapply(seq(nrow(umap_params)), function(i) {
+  data.table(
+    x = umaps[[i]][,1],
+    y = umaps[[i]][,2],
+    z = umaps[[i]][,3],
+    n_neighbors = umap_params$n_neighbors[i],
+    min_dist = umap_params$min_dist[i],
+    group =  df$loan_status
+  )
+}))
+
+plot_db<-
+  d %>% 
+    group_by(n_neighbors,min_dist) %>% 
+    mutate( slice_num =  cur_group_id()) %>% 
+    ungroup
+
+cat("Transformacion UMAP con valiación cruzada en 3 dimensiones completada!\n")
+```
+
+Estos son los cortes de los componentes UMAP1 vs. UMAP2 para cada dupla de parámetros. Observamos imágenes muy similares a las obtenidas con el modelo simple.
+
+```{r echo=FALSE}
+
+plot_db %>%
+  dplyr::filter(slice_num %in% c( 1:9 ) ) %>% 
+ggplot() +
+  geom_scattermore(
+    mapping = aes(x = x, y = y,colour=group),
+    pointsize = 2
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  ) +
+  facet_wrap(
+             min_dist ~ n_neighbors 
+             ,labeller = label_both
+             ,scales = "free"
+             ) +
+  theme_bw() +
+  labs(title = "Loan Approval dataset: UMAP1 vs. UMAP2")
+```
+
+Estos son los cortes de los componentes UMAP1 vs. UMAP3 para cada dupla de parámetros. Observamos más separación en la variable respuesta con distancias mayores (min_dist = 0.1) y vencindarios un poco más grandes (n_neighbors = 20:30).
+
+
+```{r echo=FALSE}
+
+plot_db %>%
+  dplyr::filter(slice_num %in% c( 1:9 ) ) %>% 
+ggplot() +
+  geom_scattermore(
+    mapping = aes(x = x, y = z,colour=group),
+    pointsize = 2
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  ) +
+  facet_wrap(
+             min_dist ~ n_neighbors 
+             ,labeller = label_both
+             ,scales = "free"
+             ) +
+  theme_bw() +
+  labs(title = "Loan Approval dataset: UMAP1 vs. UMAP3")
+```
+
+Estos son los cortes de los componentes UMAP1 vs. UMAP3 para cada dupla de parámetros. Observamos más separación en la variable respuesta con distancias mayores (min_dist = 0.1) y vencindarios un poco más grandes (n_neighbors = 20:30).
+
+```{r echo=FALSE}
+
+plot_db %>%
+  dplyr::filter(slice_num %in% c( 1:9 ) ) %>% 
+ggplot() +
+  geom_scattermore(
+    mapping = aes(x = y, y = z,colour=group),
+    pointsize = 2
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  ) +
+  facet_wrap(
+             min_dist ~ n_neighbors 
+             ,labeller = label_both
+             ,scales = "free"
+             ) +
+  theme_bw() +
+  labs(title = "Loan Approval dataset: UMAP2 vs. UMAP3")
+```
+
+Al incrementar la demension, observamos una mejor separación de la variable respuesta. Esto nos indica que la estructura de los datos es compleja y la reducción a dos dimenciones no la logra capturar completamente.
+
+Por último, para entender mejor esta estructura, mostramos el top 10 de correlaciones entre los features y los 3 componentes de UMAP. Utilizamos el caso min_dist = 0.1 y n_neighbors = 30.
+
+Como vemos en la tabla de abajo, hay features que sobresalen en la dimension 2 y 3 con correlación cosiderable. Esto nos ayuda a entender mejor la complejidad de la estructura de nuestros datos.
+
+```{r echo=FALSE, warning=FALSE}
+
+final_recipe <-
+  recipe(~ ., data = loan_scaled) %>%
+  step_nzv(all_predictors()) %>%
+  #step_normalize(all_numeric_predictors()) %>%
+  #step_corr(all_numeric_predictors(), threshold = 0.85) %>%
+  step_umap(all_predictors(), 
+            num_comp = 3,
+            neighbors = 30,
+            min_dist = 0.1,
+            learn_rate = 1,
+            metric = "euclidean" ,  # metric = c("euclidean", "manhattan", "cosine", "hamming")
+            epochs = 400,
+            seed = c(24,123)
+            )
+
+set.seed(24)
+
+#seed 19, slice 2 or100
+
+# Prep the recipe (fit the preprocessing steps including UMAP)
+final_prep <- prep(final_recipe, training = loan_scaled)
+
+# Transform the data using the prepped recipe
+umap_results <- bake(final_prep, new_data = loan_scaled)
+
+analyze_umap_correlations <- function(original_data, umap_results, n_top = 10) {
+  
+  # Combine original features with UMAP components
+  combined_data <- bind_cols(
+    original_data %>% select(where(is.numeric)),
+    umap_results %>% select(starts_with("UMAP"))
+  )
+  
+  # Get feature names and UMAP component names
+  feature_names <- original_data %>% select(where(is.numeric)) %>% names()
+  umap_names <- umap_results %>% select(starts_with("UMAP")) %>% names()
+  
+  # Calculate correlations manually
+  correlations <- tibble()
+  
+  for (umap_comp in umap_names) {
+    for (feature in feature_names) {
+      cor_val <- cor(combined_data[[feature]], combined_data[[umap_comp]], use = "complete.obs")
+      
+      correlations <- bind_rows(
+        correlations,
+        tibble(
+          term = feature,
+          component = umap_comp,
+          correlation = cor_val
+        )
+      )
+    }
+  }
+  correlations <- correlations %>%
+    filter(!is.na(correlation)) %>%
+    group_by(component) %>%
+    mutate(abs_correlation = abs(correlation)) %>%
+    slice_max(abs_correlation, n = n_top) %>%
+    arrange(component, desc(abs_correlation))
+  
+  return(correlations)
+}
+
+analyze_umap_correlations( loan_scaled , umap_results) %>% 
+  arrange(desc(abs_correlation)) %>% 
+  head(10)
+
+```
+
+Mientras que nuestro modelo UMAP de 3 dimensiones no presenta correlación entre ninguna variable, concluyendo que cada componente captura partes diferentes de la estructura de datos total.
+
+```{r echo=FALSE}
+umap_results %>% 
+  cor(., method="spearman") %>% 
+ggcorrplot::ggcorrplot(corr = . ,
+                       type = "lower", 
+                       show.diag = TRUE,
+                       lab = TRUE, 
+                       lab_size = 3)
+```
+
+
+
+# Conclusiones
+
+Aquí vamos a concluir
+
+
