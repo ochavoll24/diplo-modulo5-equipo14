@@ -104,7 +104,119 @@ Copiar aquí el código del modelo
 
 ###  Modelo UMAP
 
-Copiar aquí el código del modelo
+```{r}
+
+df <- df[, !names(df) %in% c("education", "self_employed")]
+```
+
+```{r}
+df %>% dim()
+
+df %>% glimpse()
+
+df %>% head()
+```
+
+  ```{r}
+
+glimpse(df)
+```
+
+```{r}
+head(df)
+
+
+X <- df %>% select(where(is.numeric))
+idx <- complete.cases(X)
+Xs <- scale(X[idx, , drop = FALSE])
+
+set.seed(123)
+um <- umap(Xs)                   
+coords <- as.data.frame(um)
+names(coords) <- c("UMAP1", "UMAP2")
+```
+
+
+```{r}
+
+datos <- data.frame(
+  UMAP1 = coords$UMAP1,
+  UMAP2 = coords$UMAP2,
+  loan_status = as.factor(df$loan_status[idx])
+)
+```
+
+```{r}
+
+ggplot(datos, aes(x = UMAP1, y = UMAP2, color = loan_status)) +
+  geom_point(size = 2, alpha = 0.7) +
+  labs(title = "UMAP: Loan Approval", color = "Loan Status") +
+  theme_minimal()
+```
+
+```{r}
+
+umap_rec <- recipe(~ ., data = df) %>%
+  update_role(loan_status, new_role = "id") %>%
+  step_impute_mean(all_numeric_predictors()) %>%  
+  step_normalize(all_numeric_predictors()) %>%
+  step_umap(all_numeric_predictors(), num_comp = 2)
+
+umap_res <- prep(umap_rec)
+umap_baked <- juice(umap_res)
+
+```
+
+```{r}
+ggplot(umap_baked, aes(x = UMAP1, y = UMAP2, color = loan_status)) +
+  geom_point(size = 2, alpha = 0.7) +
+  labs(title = "UMAP via recipes: Loan Approval", color = "Loan Status") +
+  theme_minimal()
+```
+
+```{r}
+umap_params <- expand.grid(n_neighbors = c(10, 15, 30),
+                           min_dist = c(0.05,0.1, 0.3))
+
+umaps <- lapply(seq(nrow(umap_params)), function(i) {
+  umap(X = X[idx, , drop = FALSE],
+       n_neighbors = umap_params$n_neighbors[i],
+       min_dist = umap_params$min_dist[i])
+})
+```
+
+```{r}
+d <- rbindlist(lapply(seq(nrow(umap_params)), function(i) {
+  data.table(
+    x = umaps[[i]][,1],
+    y = umaps[[i]][,2],
+    n_neighbors = umap_params$n_neighbors[i],
+    min_dist = umap_params$min_dist[i],
+    group = df$loan_status[idx]
+  )
+}))
+```
+
+```{r}
+
+ggplot(d) +
+  geom_scattermore(aes(x = x, y = y, color = group), 
+                   pointsize = 2, alpha = 0.7) +
+  facet_grid(min_dist ~ n_neighbors, labeller = label_both, scales = "free") +
+  scale_color_viridis(discrete = TRUE, option = "D") +
+  theme_bw(base_size = 14) +
+  theme(panel.grid = element_blank(),
+        strip.background = element_rect(fill = "#F0F0F0")) +
+  labs(title = "UMAP: UMAP Approval - UMAP Approval 2  ",
+       x = "UMAP 1",
+       y = "UMAP 2",
+       color = "Grupo")
+
+```
+# Conclusiones :
+
+##En metodo UMAP en 2 dimenciones no parece ser el mejor  metodo de reduccion de dimenciones ya que para n-neighbors se puede notar que los puntos se expanden mas y se contruyen  vecindades mas pequeñas , ahora para n=15 se observa ya mas  balanceada la muestra entre local y global, se ve menos estiradacon menos varianza que n=10 , para la ultima con 30 se ve mascompacta la curva, tiene menor varianza ya que se promedian distancias .Con varianza alta (n=10) se genero curvas mas largas y extendidas a diferencia de n=30  la varianza fue menos a un que en para todos los casos Approved y Rejected están mezclados  a lo largo de la curva ya que la variabilidad en el embedding no separo como esperabamos las clases. Por lo que se podrian ajustar mejor los hiperparametros para reducir ruido y hacer mas pruebas para ver cual se ajusta mejor, ninguna tecnica es perfecta todas distorcionan los datos al aplastarlo en menos dimenciones es decir  se pierde informacion si o si.
+
 
 ### Modelo UMAP con 3 dimensiones
 
