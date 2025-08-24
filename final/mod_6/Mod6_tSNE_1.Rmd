@@ -1,0 +1,575 @@
+---
+title: "MOd6_tSNE"
+output: html_document
+date: "2025-08-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+El algoritmo t-Distributed Stochastic Neighbor Embedding (t-SNE) es una técnica de reducción de dimensionalidad no lineal, que ayuda a representar datos de alta dimensión en un espacio de baja dimensión —usualmente dos o tres dimensiones— de manera que sea posible visualizarlos y detectar patrones. A diferencia de otros métodos lineales como el Análisis de Componentes Principales (PCA), t-SNE preserva la relación de cercanía entre las observaciones: puntos que son similares en el espacio original tienden a aparecer cercanos en el plano reducido, mientras que los puntos diferentes se alejan.
+
+Al aplicar este algoritmo a nuestra base de datos, se facilita la detección de perfiles de solicitantes con características similares. De esta forma, se pueden explorar las diferencias entre clientes con préstamos abrobados y rechazados y se podría ayudar a comprender la estructura que dicta las decisiones de aprobación.
+
+```{r}
+
+library(tidyverse)
+library(tidymodels)
+library(modeldata)
+library(embed)
+library(tsne)
+library(uwot)
+library(scattermore)
+library(readr)
+library(Rtsne)
+library(gganimate)
+library(data.table)
+library(gifski)
+library(png)
+
+# Carga datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# Revisa estructura
+glimpse(df)
+
+# Selecciona variables numericas y estandariza
+df_num <- df %>%
+  dplyr::select(where(is.numeric)) %>%
+  scale()  
+
+#Aplicar t-SNE con parámetros iniciales
+set.seed(123)
+tsne_res <- Rtsne(
+  X = df_num,
+  perplexity = 30,
+  eta = 200,
+  max_iter = 500,
+  check_duplicates = FALSE
+)
+
+#Crear dataframe con resultados
+datos <- data.frame(
+  Rtsne1 = tsne_res$Y[,1],
+  Rtsne2 = tsne_res$Y[,2],
+  loan_status = df$loan_status
+)
+
+#Visualización
+ggplot(datos, aes(x = Rtsne1, y = Rtsne2, color = loan_status)) +
+  geom_point(size = 1.5) +
+  labs(title = "Loan Approval Dataset - tSNE (perplexity=30, eta=200)") +
+  theme_minimal()
+
+```
+
+En la gráfica se observan agrupaciones visibles de solicitudes de préstamo, aunque no están completamente separadas. Hay zonas donde predominan los aprobados, por ejemplo en la parte central e izquierda, y otras donde predominan los rechazados, como en la parte superior y derecha. Sin embargo, también existe una mezcla considerable, lo que refleja que hay clientes con perfiles numéricamente similares pero con resultados distintos en la decisión del préstamo. Esto indica que el algoritmo t-SNE no actúa como un clasificador, pero muestra la estructura de los datos y muestra que las decisiones de aprobación sí se reflejan en las variables numéricas consideradas, aunque no de manera perfecta. 
+
+A continuacion se construye una cuadrícula de combinaciones de parámetros para el algoritmo t-SNE, en particular los valores de perplexity y eta (tasa de aprendizaje). Con la función expand.grid se generan todas las posibles combinaciones entre perplexity = 10, 20, 30, 40 y eta = 50, 100, 200, lo que permite ejecutar el modelo varias veces con diferentes configuraciones. De esta manera se pueden comparar los resultados y observar cómo la variación de estos hiperparámetros influye en la organización de los datos en el plano reducido.
+
+```{r}
+set.seed(123)
+Rtsne_params <- expand.grid(
+  perplexity = c(10, 20, 30, 40),
+  eta = c(50, 100, 200)
+)
+
+Rtsne_res <- lapply(seq(nrow(Rtsne_params)), function(i) {
+  Rtsne(
+    X = df_num,
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    max_iter = 500,
+    check_duplicates = FALSE,
+    verbose = TRUE
+  )
+})
+
+d_all <- rbindlist(lapply(seq(nrow(Rtsne_params)), function(i) {
+  data.table(
+    Rtsne1 = Rtsne_res[[i]]$Y[,1],
+    Rtsne2 = Rtsne_res[[i]]$Y[,2],
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    loan_status = df$loan_status
+  )
+}))
+
+ggplot(d_all, aes(x = Rtsne1, y = Rtsne2, color = loan_status)) +
+  geom_scattermore(pointsize = 2) +
+  facet_wrap(eta ~ perplexity, labeller = label_both) +
+  theme_bw() +
+  labs(title = "Exploración de parámetros en Loan Approval Dataset")
+
+```
+Se observa para valores bajos de preplexity que los puntos se ven m'as dispersos, las agrupaciones son difusas y no existe una estructura porque se mezclan muchos aprobas y rechazados.
+
+Al aumentar al valor de perplexity a 30 , aparece una separaci'on m'as definida, aunque todav'ia existe superposici'on de algunos datos. 
+
+Si todav'ia se aumenta m'as el valor se generan formas alargadas, ademas de que las clases siguen mezcladas. 
+
+El hecho de que no se vea clara una separacion bien definida entre aprobados/rechazados significa que no se pueden distinguir solamente con las variables numericas.
+
+Aunque si es notable como con parametros intermedios de perplexity y eta aparecen grupos mas organizados, lo que sugiere que si hay perfiles de clientes que tienden mas hacia la aprobacion o el rechazo. 
+
+Se asume entonces que aune t-SNE puede ayudar a darse una idea de que si hay patrones latentes, no logra separarlos. Par esto podrian ser mas utiles modeloos no supercisados de clasificacion para poder realmente predecir si el prestamo sera aprobado a rechazado.
+
+
+```{r}
+#ANIMACIONES
+
+colores_p = c('#1F77B4','#D62728')
+names(colores_p) = c(" Approved"," Rejected")
+
+anim_plot_p<-d_all %>% 
+  filter(perplexity == 10 | perplexity == 20 | perplexity == 30 | perplexity == 40) %>% 
+  mutate(parametros = factor(paste('perplexity:', perplexity, 'eta:', eta))) %>% ggplot() +
+  geom_scattermore(
+    mapping = aes(x = Rtsne1, y = Rtsne2, col = loan_status),
+    pointsize = 2
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  ) +
+  theme_bw()+
+  labs(title = 'Loan Approval Dataset - tSNE (Variables Numéricas)')+
+  scale_color_manual(values = colores_p) + 
+  transition_states(parametros, transition_length = 5, state_length = 5) +
+  labs(subtitle = '{closest_state}')
+
+animate(anim_plot_p, nframes = 300,renderer = gifski_renderer())
+
+
+
+```
+
+
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(Rtsne)
+library(data.table)
+library(scattermore)
+library(gganimate)
+
+# 1. Cargar datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# 2. Crear receta para transformar variables
+rec <- recipe(loan_status ~ ., data = df) %>%
+  step_dummy(all_nominal_predictors()) %>%  # convierte categóricas en dummies
+  step_normalize(all_numeric_predictors())  # normaliza todas las numéricas
+
+# 3. Preparar y hornear la receta
+df_num <- prep(rec) %>% bake(new_data = NULL)
+
+# 4. Aplicar t-SNE con parámetros base
+set.seed(123)
+tsne_res <- Rtsne(
+  X = df_num %>% select(-loan_status), # todas las predictoras ya numéricas
+  perplexity = 30,
+  eta = 200,
+  max_iter = 500,
+  check_duplicates = FALSE
+)
+
+# 5. Dataframe con resultados + etiqueta original
+datos <- data.frame(
+  Rtsne1 = tsne_res$Y[,1],
+  Rtsne2 = tsne_res$Y[,2],
+  loan_status = df$loan_status
+)
+
+# 6. Visualización
+ggplot(datos, aes(x = Rtsne1, y = Rtsne2, color = loan_status)) +
+  geom_point(size = 1.5) +
+  labs(title = "Loan Approval Dataset - tSNE con variables categóricas incluidas, (perplexity=30, eta=200)") +
+  theme_minimal()
+
+```
+
+La inclusión de las variables categóricas permite que el algoritmo tenga más información para organizar los puntos, y eso se refleja en la aparición de grupos más claros ("Petalos"). Estos clústeres corresponden a perfiles de solicitantes que comparten características similares (ejemplo: nivel educativo, condición de autoempleo, ingresos, activos). Aun así, dentro de cada clúster hay mezcla de puntos rojos y azules, lo cual indica que los perfiles de los clientes utilizando las variables categoricas como education y self_employed no son utiles para realizar la agrupaci'on de los datos. 
+
+
+
+De igual forma se exploran mas combinaciones de valores para perplexity y eta:
+
+```{r}
+# Exploración de parámetros con variables categóricas incluidas
+set.seed(123)
+Rtsne_params <- expand.grid(
+  perplexity = c(10, 20, 30, 40),
+  eta = c(50, 100, 200)
+)
+
+Rtsne_res <- lapply(seq(nrow(Rtsne_params)), function(i) {
+  Rtsne(
+    X = df_num %>% select(-loan_status),
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    max_iter = 500,
+    check_duplicates = FALSE,
+    verbose = TRUE
+  )
+})
+
+d_all <- rbindlist(lapply(seq(nrow(Rtsne_params)), function(i) {
+  data.table(
+    Rtsne1 = Rtsne_res[[i]]$Y[,1],
+    Rtsne2 = Rtsne_res[[i]]$Y[,2],
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    loan_status = df$loan_status
+  )
+}))
+
+ggplot(d_all, aes(x = Rtsne1, y = Rtsne2, color = loan_status)) +
+  geom_scattermore(pointsize = 2) +
+  facet_wrap(eta ~ perplexity, labeller = label_both) +
+  theme_bw() +
+  labs(title = "Exploración de parámetros en Loan Approval Dataset (con categóricas)")
+
+```
+Explorando los resultados, dentro de cada clúster aun hay mezcla de puntos rojos y azules. Se puede concluir que los perfiles de los clientes con la informacion que se encuentra en la base de datos no garantizan por sí solos la aprobación o rechazo: hay individuos con características similares pero con decisiones diferentes. Esto refleja que la decisión final del préstamo es multifactorial y puede incluir criterios adicionales que no e incluyen en la base de datos.
+
+```{r}
+#ANIMACIONES
+
+colores_p = c('#1F77B4','#D62728')
+names(colores_p) = c(" Approved"," Rejected")
+
+anim_plot_p<-d_all %>% 
+  filter(perplexity == 10 | perplexity == 20 | perplexity == 30 | perplexity == 40 ) %>% 
+  mutate(parametros = factor(paste('perplexity:', perplexity, 'eta:', eta))) %>% ggplot() +
+  geom_scattermore(
+    mapping = aes(x = Rtsne1, y = Rtsne2, col = loan_status),
+    pointsize = 2
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  ) +
+  theme_bw()+
+  labs(title = 'Loan Approval Dataset - tSNE (Con Variables Categóricas)')+
+  scale_color_manual(values = colores_p) + 
+  transition_states(parametros, transition_length = 5, state_length = 5) +
+  labs(subtitle = '{closest_state}')
+
+animate(anim_plot_p, nframes = 300,renderer = gifski_renderer())
+
+
+
+```
+
+A continuación implementaremos t-SNE en 3 dimensiones, para explorar estructuras que en tsne-2D no se logren apreciar 
+
+Comenzamos nuestra visualización incluyendo las variables categoricas en el modelo, con parametros fijos de perplexity=30, eta=200
+
+
+```{r}
+#PARA 3 DIMENSIONES, con variables categoricas
+library(plotly)
+library(tidyverse)
+library(tidymodels)
+library(Rtsne)
+library(data.table)
+library(scattermore)
+library(gganimate)
+library(dplyr)
+
+# 1. Cargar datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# 2. Crear receta para transformar variables
+rec <- recipe(loan_status ~ ., data = df) %>%
+  step_dummy(all_nominal_predictors()) %>%  # convierte categóricas en dummies
+  step_normalize(all_numeric_predictors())  # normaliza todas las numéricas
+
+# 3. Preparar y hornear la receta
+df_num_cat <- prep(rec) %>% bake(new_data = NULL)
+
+#HASTA AQUI LOS DATOS YA ESTÁN LISTOS, INCLUYENDO CATEGORICAS (df_num_cat)
+
+# 4. Aplicar t-SNE con parámetros base (3D)
+set.seed(123)
+tsne_res_3D <- Rtsne(
+  X = df_num_cat %>% select(-loan_status), # todas las predictoras ya numéricas
+  dims=3,
+  perplexity = 30,
+  eta = 200,
+  max_iter = 500,
+  check_duplicates = FALSE
+)
+
+# 5. Dataframe con resultados + etiqueta original
+datos_3D <- data.frame(
+  Rtsne1 = tsne_res_3D$Y[,1],
+  Rtsne2 = tsne_res_3D$Y[,2],
+  Rtsne3 = tsne_res_3D$Y[,3],
+  loan_status = df$loan_status
+)
+
+plot_ly(
+  datos_3D, 
+  x = ~Rtsne1, y = ~Rtsne2, z = ~Rtsne3,
+  color = ~loan_status,
+  colors = c('#1F77B4','#D62728'),   
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 3)
+) %>%
+  layout(title = "Loan Approval Dataset - tSNE (Con Variables Categóricas)",
+         legend = list(
+      title = list(text = "Loan Status"),
+      orientation = "v",
+      y = 1, x = 1
+    )
+    )
+
+
+
+```
+
+De la grafica anterior notamos que lo que habiamos llamado "petalos" en el caso 2D, toman forma de "gusanos" en el caso 3D, lo que nos permite una mejor visualización de los datos
+
+A continuación variaremos los parametros (perplexity, eta), para explorar aún más nuestros datos
+
+```{r}
+#BUENO HASTA AHORA
+#PARA 3 DIMENSIONES, con variables categoricas, CON GRID
+
+library(tidyverse)
+library(tidymodels)
+library(Rtsne)
+library(data.table)
+library(scattermore)
+library(gganimate)
+library(dplyr)
+
+# 1. Cargar datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# 2. Crear receta para transformar variables
+rec <- recipe(loan_status ~ ., data = df) %>%
+  step_dummy(all_nominal_predictors()) %>%  # convierte categóricas en dummies
+  step_normalize(all_numeric_predictors())  # normaliza todas las numéricas
+
+# 3. Preparar y hornear la receta
+df_num_cat <- prep(rec) %>% bake(new_data = NULL)
+
+#HASTA AQUI LOS DATOS YA ESTÁN LISTOS, INCLUYENDO CATEGORICAS (df_num_cat)
+
+#CREAMOS EL GRID Y APLICAMOS TSNE 3D
+
+set.seed(123)
+Rtsne_params <- expand.grid(
+  perplexity = c(10, 20, 30, 40),
+  eta = c(50, 100, 200)
+)
+
+Rtsne_res <- lapply(seq(nrow(Rtsne_params)), function(i) {
+  Rtsne(
+    X = df_num_cat  %>% select(-loan_status),
+    dims=3,
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    max_iter = 500,
+    check_duplicates = FALSE,
+    verbose = TRUE
+  )
+})
+
+
+#Crear dataframe con resultados
+d_all_3D_C <- rbindlist(lapply(seq(nrow(Rtsne_params)), function(i) {
+  data.table(
+    Rtsne1 = Rtsne_res[[i]]$Y[,1],
+    Rtsne2 = Rtsne_res[[i]]$Y[,2],
+    Rtsne3 = Rtsne_res[[i]]$Y[,3],
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    loan_status = df$loan_status
+  )
+}))
+
+
+
+```
+
+
+Y graficaremos de manera interactiva t-sne, para los distintos valores de los parametros (perplexity, eta)
+
+```{r}
+#INTERACTIVA 3D, CON VARIABLES CATEGORICAS
+plot_ly(
+  d_all_3D_C,
+  x = ~Rtsne1, y = ~Rtsne2, z = ~Rtsne3,
+  color = ~loan_status,
+  colors = c('#1F77B4','#D62728'), 
+  frame = ~paste("Perplexity", perplexity, "Eta", eta),
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 3)
+) %>%
+  layout(title = "Loan Approval Dataset - tSNE (Con Variables Categóricas)",
+         legend = list(
+      title = list(text = "Loan Status"),
+      orientation = "v",
+      y = 1, x = 1
+    )
+    )
+```
+
+De las graficas anteriores observamos una mejor separación en grupos para los parametros (perplexity=40, eta=100), 
+
+Ahora implementamos T-sne 3D, pero utilizando unicamente las variables numericas, con valores fijos de parametros (perplexity=30, eta= 200)
+```{r}
+#3D Sin variables categoricas
+
+library(tidyverse)
+library(Rtsne)
+library(data.table)
+library(scattermore)
+library(gganimate)
+
+# Carga datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# Selecciona variables numericas y estandariza
+df_num <- df %>%
+  dplyr::select(where(is.numeric)) %>%
+  scale()  
+
+#HASTA AQUÍ LOS DATOS YA ESTÁN LISTOS, SIN VARIABLES CATEGORICAS (df_num)
+
+#Aplicar t-SNE con parámetros iniciales
+set.seed(123)
+tsne_res <- Rtsne(
+  X = df_num,
+  dims=3,
+  perplexity = 30,
+  eta = 200,
+  max_iter = 500,
+  check_duplicates = FALSE
+)
+
+#Crear dataframe con resultados
+datos_3D_SN <- data.frame(
+  Rtsne1 = tsne_res$Y[,1],
+  Rtsne2 = tsne_res$Y[,2],
+  Rtsne3 = tsne_res$Y[,3],
+  loan_status = df$loan_status
+)
+
+plot_ly(
+  datos_3D_SN, 
+  x = ~Rtsne1, y = ~Rtsne2, z = ~Rtsne3,
+  color = ~loan_status,
+  colors = c('#1F77B4','#D62728'),   
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 3)
+) %>%
+  layout(title = "Loan Approval Dataset - tSNE (Variables Numéricas)")
+
+
+
+```
+
+Podemos apreciar de una mejor manera como se agrupan los datos, y porque parecen superponerse al verse unicamente en 2 dimensiones
+
+Notamos que los datos "aprovados" parecen envolver a los "rechazados"
+
+Jugamos nuevamente con los parametros (perplexity, eta), para obtener distintas visualizaciones
+```{r}
+#3D Sin variables categoricas, CON GRID
+
+library(tidyverse)
+library(Rtsne)
+library(data.table)
+library(scattermore)
+library(gganimate)
+
+# Carga datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# Selecciona variables numericas y estandariza
+df_num <- df %>%
+  dplyr::select(where(is.numeric)) %>%
+  scale()  
+
+#HASTA AQUÍ LOS DATOS YA ESTÁN LISTOS, SIN VARIABLES CATEGORICAS (df_num)
+
+#CREAMOS EL GRID Y APLICAMOS TSNE 3D
+
+set.seed(123)
+Rtsne_params <- expand.grid(
+  perplexity = c(10, 20, 30, 40),
+  eta = c(50, 100, 200)
+)
+
+Rtsne_res <- lapply(seq(nrow(Rtsne_params)), function(i) {
+  Rtsne(
+    X = df_num,
+    dims=3,
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    max_iter = 500,
+    check_duplicates = FALSE,
+    verbose = TRUE
+  )
+})
+
+
+#Crear dataframe con resultados
+d_all_3D_SC <- rbindlist(lapply(seq(nrow(Rtsne_params)), function(i) {
+  data.table(
+    Rtsne1 = Rtsne_res[[i]]$Y[,1],
+    Rtsne2 = Rtsne_res[[i]]$Y[,2],
+    Rtsne3 = Rtsne_res[[i]]$Y[,3],
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    loan_status = df$loan_status
+  )
+}))
+
+
+```
+
+Graficamos los diferentes resultados del modelo t-sne, para los distintos valores de los parametros, en esta grafica interactiva
+
+```{r}
+#INTERACTIVA 3D, SIN VARIABLES CATEGORICAS
+plot_ly(
+  d_all_3D_SC,
+  x = ~Rtsne1, y = ~Rtsne2, z = ~Rtsne3,
+  color = ~loan_status,
+  colors = c('#1F77B4','#D62728'), 
+  frame = ~paste("Perplexity", perplexity, "Eta", eta),
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 3)
+) %>%
+  layout(title = "t-SNE (Variables Numéricas)",
+         legend = list(
+      title = list(text = "Loan Status"),
+      orientation = "v",
+      y = 1, x = 1
+    )
+    )
+```
+
+Notamos una evidente separación por la mitad, para parametros (perplexity=10, eta=100), aunque con algunos puntos "fuera" de su grupo. 
+
+
+Podemos concluir que el método t-sne es una buena herramienta para visualizar datos de alta dimensionalidad en baja dimensionalidad, sin embargo es evidente que t-sne 3D brinda una mejor visualización que t-sne 2D, ya que nos permite detectar las estructuras escondidas de los datos proyectados en un plano.
+
+
+
