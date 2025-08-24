@@ -2,8 +2,20 @@
 title: "Tarea 1: Reducción de dimensión usando PCA, t-SNE y UMAP"
 author: "Equipo 9 - Aprendizaje no supervisado"
 date: "2025-08-22"
-output: html_document
+output:
+  html_document:
+    theme: flatly
+    toc: yes
 ---
+
+<style type="text/css">
+.main-container {
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -84,7 +96,11 @@ Esta es una breve introducción a reducción de dimensión
 
 # Objetivo
 
-Este es un breve texto planteando el objetivo
+El objetivo principal de este proyecto es la reducción de dimensión de los datos mediante la implementación de tres modelos: Análisis de Componentes Principales (PCA), t-distributed Stochastic Neighbor Embedding (t-SNE) y Uniform Manifold Approximation and Projection (UMAP).
+
+En el caso de PCA, se busca que dos o tres componentes principales capturen entre el 60% y el 80% de la varianza, considerando que el número de variables originales es relativamente bajo.
+
+Para los modelos t-SNE y UMAP, el propósito es obtener representaciones en nuevas dimensiones con baja correlación entre sí, evaluando además su capacidad de separar de manera coherente la variable respuesta “aprobar o rechazar el crédito”, lo que permitirá analizar si las proyecciones resultantes facilitan una clara diferenciación binaria en el espacio reducido.
 
 
 # Ejección de Modelos
@@ -108,13 +124,14 @@ Copiar aquí el código del modelo
 
 ### Modelo UMAP con 3 dimensiones
 
-Con las conclusiones del modelo simple, intentamos la variante de 3 dimensiones para entender si en algún otro corte de las 3 variables el modelo UMAP lograba consolidar mejor la variable respuesta. Para este ejercicio, removimos la variable "income_annum" que es la principal correlacionada con la aprobación del crédito.
+A partir de los resultados obtenidos con el modelo bidimensional, se procedió a implementar una variante de tres dimensiones con el fin de evaluar si, en cortes adicionales entre los componentes, UMAP lograba una mejor diferenciación de la variable respuesta. Para este ejercicio, se excluyó la variable income_annum, dado que mostraba una correlación predominante con la aprobación del crédito.
 
-#### Validación cruzada
+#### Tuning de hiperparámetros
 
-Elegimos algúnos parametros cercanos a los que observamos del modelo simple, utilizando la distancia euclidiana:
-n_neighbors = c(15, 20, 30)
-min_dist = c(0.05, 0.075, 0.1)
+Para el ajuste de hiperparámetros se utilizó una búsqueda en malla, en la cual se incrementaron los valores de n_neighbors y, de manera paralela, los de min_dist, en comparación con los parámetros estándar definidos por UMAP. La distancia utilizada fue "euclidean".
+
+n_neighbors = c(20, 30)
+min_dist = c(0.05,  0.1)
 
 ```{r include=FALSE}
 
@@ -127,7 +144,7 @@ loan_scaled <-
 
 df <-loan_scaled
 
-umap_params = expand.grid(n_neighbors = c(15, 20, 30) , min_dist = c(0.05, 0.075, 0.1)   ) #c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 0.75, 1.1)
+umap_params = expand.grid(n_neighbors = c(20, 30) , min_dist = c(0.05,  0.1)   ) #c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 0.75, 1.1)
 
 #umap_params = expand.grid(n_neighbors = c(3, 5, 8, 12, 20, 30) , min_dist = c(0.001, 0.005, 0.01, 0.05, 0.1)   ) #c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 
 
@@ -165,12 +182,13 @@ plot_db<-
 cat("Transformacion UMAP con valiación cruzada en 3 dimensiones completada!\n")
 ```
 
-Estos son los cortes de los componentes UMAP1 vs. UMAP2 para cada dupla de parámetros. Observamos imágenes muy similares a las obtenidas con el modelo simple.
+Se generaron las proyecciones de los componentes UMAP1 vs. UMAP2 para cada combinación de parámetros evaluada. Los resultados obtenidos muestran patrones visuales muy similares a los observados en el modelo base, sin evidenciar mejoras significativas en la separación de la variable respuesta.
 
-```{r echo=FALSE}
+
+```{r echo=FALSE, fig.height=8, fig.width=8}
 
 plot_db %>%
-  dplyr::filter(slice_num %in% c( 1:9 ) ) %>% 
+  dplyr::filter(slice_num %in% c( 1:4 ) ) %>% 
 ggplot() +
   geom_scattermore(
     mapping = aes(x = x, y = y,colour=group),
@@ -191,13 +209,13 @@ ggplot() +
   labs(title = "Loan Approval dataset: UMAP1 vs. UMAP2")
 ```
 
-Estos son los cortes de los componentes UMAP1 vs. UMAP3 para cada dupla de parámetros. Observamos más separación en la variable respuesta con distancias mayores (min_dist = 0.1) y vencindarios un poco más grandes (n_neighbors = 20:30).
+Se analizaron las proyecciones de los componentes UMAP1 vs. UMAP3 para cada combinación de parámetros. En este caso, se observó una mayor separación en la variable respuesta al utilizar distancias más amplias (min_dist = 0.1) junto con vecindarios ligeramente mayores (n_neighbors = 20–30).
 
 
-```{r echo=FALSE}
+```{r echo=FALSE, fig.height=8, fig.width=8}
 
 plot_db %>%
-  dplyr::filter(slice_num %in% c( 1:9 ) ) %>% 
+  dplyr::filter(slice_num %in% c( 1:4 ) ) %>% 
 ggplot() +
   geom_scattermore(
     mapping = aes(x = x, y = z,colour=group),
@@ -218,12 +236,13 @@ ggplot() +
   labs(title = "Loan Approval dataset: UMAP1 vs. UMAP3")
 ```
 
-Estos son los cortes de los componentes UMAP1 vs. UMAP3 para cada dupla de parámetros. Observamos más separación en la variable respuesta con distancias mayores (min_dist = 0.1) y vencindarios un poco más grandes (n_neighbors = 20:30).
 
-```{r echo=FALSE}
+Se analizaron las proyecciones de los componentes UMAP2 vs. UMAP3 para cada combinación de parámetros. En este caso, se observó una mayor separación en la variable respuesta al utilizar distancias más amplias (min_dist = 0.1) junto con vecindarios ligeramente mayores (n_neighbors = 20–30).
+
+```{r echo=FALSE, fig.height=8, fig.width=8}
 
 plot_db %>%
-  dplyr::filter(slice_num %in% c( 1:9 ) ) %>% 
+  dplyr::filter(slice_num %in% c( 1:4 ) ) %>% 
 ggplot() +
   geom_scattermore(
     mapping = aes(x = y, y = z,colour=group),
@@ -244,11 +263,10 @@ ggplot() +
   labs(title = "Loan Approval dataset: UMAP2 vs. UMAP3")
 ```
 
-Al incrementar la demension, observamos una mejor separación de la variable respuesta. Esto nos indica que la estructura de los datos es compleja y la reducción a dos dimensiones no la logra capturar completamente.
+Al incrementar la dimensionalidad a tres componentes, se observó una mejor separación de la variable respuesta. Este resultado sugiere que la estructura de los datos presenta una mayor complejidad, la cual no puede ser representada de manera adecuada en un espacio bidimensional.
 
-Por último, para entender mejor esta estructura, mostramos el top 10 de correlaciones entre los features y los 3 componentes de UMAP. Utilizamos el caso min_dist = 0.1 y n_neighbors = 30.
+Finalmente, con el propósito de comprender con mayor profundidad la estructura revelada por UMAP, se calcularon las diez principales correlaciones entre las variables originales y los tres componentes obtenidos, considerando el caso con min_dist = 0.1 y n_neighbors = 30. Como se aprecia en la tabla, algunos features presentan correlaciones destacadas con los componentes 2 y 3, lo que aporta evidencia adicional sobre la complejidad de la estructura latente en los datos.
 
-Como vemos en la tabla de abajo, hay features que sobresalen en la dimension 2 y 3 con correlación cosiderable. Esto nos ayuda a entender mejor la complejidad de la estructura de nuestros datos.
 
 ```{r echo=FALSE, warning=FALSE}
 
@@ -322,7 +340,7 @@ analyze_umap_correlations( loan_scaled , umap_results) %>%
 
 ```
 
-Mientras que nuestro modelo UMAP de 3 dimensiones no presenta correlación entre ninguna variable, concluyendo que cada componente captura partes diferentes de la estructura de datos total.
+En el caso del modelo UMAP en tres dimensiones, no se identificó correlación significativa entre los componentes, lo que permite concluir que cada uno de ellos captura distintos aspectos de la estructura global de los datos.
 
 ```{r echo=FALSE}
 umap_results %>% 
@@ -338,6 +356,8 @@ ggcorrplot::ggcorrplot(corr = . ,
 
 # Conclusiones
 
-Aquí vamos a concluir
+### Modelo UMAP en 3 dimensiones
+
+En conclusión, la implementación de UMAP permitió explorar la estructura latente de los datos y visualizar la variable respuesta en un espacio de menor dimensión. El uso de tres dimensiones resultó más adecuado, ya que mejoró la separación de la aprobación del crédito, especialmente en las proyecciones de los componentes 1 vs. 3 y 2 vs. 3. Además, se identificaron features que únicamente se correlacionan con el tercer componente, aportando nueva información al análisis. Finalmente, la matriz de covarianza entre las tres dimensiones se mantuvo cercana a cero, lo que sugiere que los componentes extraídos son prácticamente ortogonales y capturan información complementaria.
 
 
