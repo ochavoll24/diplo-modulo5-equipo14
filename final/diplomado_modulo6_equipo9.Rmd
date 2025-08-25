@@ -1,0 +1,1178 @@
+---
+title: "Módulo 6: Tarea 1: Reducción de dimensión usando PCA, t-SNE y UMAP"
+author: "Equipo 9 - Aprendizaje no supervisado"
+date: "2025-08-22"
+output: html_document
+  
+
+---
+### Integrantes:
+#### Oscar Chavolla Villatoro
+#### Carlos Antonio López Díaz
+#### Alexis Martínez Xospa
+#### Carlos Antonio Pérez Rivera
+#### Artemisa Mazón Martínez
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+## Libraries 
+
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(skimr)
+library(lubridate)
+library(stringr)
+library(tidyr)
+#library(tidyverse) #
+library(purrr)
+library(stringi)
+
+### PCA libraries
+
+#library(tidymodels)
+library(broom)
+library(tidytext)
+library(recipes)
+
+
+library(knitr)
+library(kableExtra)
+library(GGally)
+library(psych)
+
+library(Hmisc)
+#library(autoplot)
+
+#library(rgl)
+library(plotly)
+library(ggforce)
+library(FactoMineR)  
+library(factoextra)
+library(ggcorrplot) #correlation plots
+library(rstatix) #prueba de bartlet?
+library(ggfortify) # extends autoplot to admin stats output variables
+library(forcats) #  changes the order ## used in code order of levels by the order in which they appear
+library(ggord)
+
+library(tidymodels)
+library(embed)        
+library(tune)
+library(dials)
+library(FNN)
+library(cluster)
+library(uwot)
+
+library(visdat)
+library(patchwork)    
+library(corrplot)     
+library(data.table)
+library(scattermore)
+library(corrr)
+
+library(Rtsne)
+library(data.table)
+library(scattermore)
+library(gganimate)
+
+theme_set(theme_bw(16))
+
+
+options(scipen = 999)
+
+# Functions
+
+## Here for the functions
+
+
+```
+
+# Introducción.
+
+En el análisis de datos, uno de los retos más frecuentes es enfrentarse a conjuntos de información con un número elevado de variables, lo que se conoce como alta dimensionalidad. Este fenómeno puede dificultar la interpretación de los datos, aumentar la complejidad computacional y, en ocasiones, generar redundancia o ruido que limita la capacidad de los modelos de aprendizaje automático para identificar patrones relevantes. Para enfrentar esta problemática, se emplean técnicas de reducción de dimensiones, cuyo objetivo principal es transformar los datos a un espacio de menor número de variables preservando, en la medida de lo posible, la estructura y la información más importante.
+
+La reducción de dimensiones resulta útil en múltiples contextos: facilita la visualización de datos complejos en dos o tres dimensiones, mejora la eficiencia de los algoritmos de aprendizaje automático y ayuda a eliminar redundancias entre variables correlacionadas. Además, permite descubrir relaciones ocultas que podrían no ser evidentes en un espacio de alta dimensionalidad.
+
+Existen diversos enfoques para llevar a cabo este proceso. Entre ellos, se destacan tres métodos ampliamente utilizados:
+
+Análisis de Componentes Principales (PCA, por sus siglas en inglés): es una técnica lineal que transforma el conjunto original de variables en un nuevo sistema de coordenadas, donde las nuevas variables —llamadas componentes principales— capturan la mayor parte de la variabilidad de los datos con un número reducido de dimensiones.
+
+t-Distributed Stochastic Neighbor Embedding (t-SNE): es un método no lineal orientado principalmente a la visualización de datos de alta dimensionalidad. Su fortaleza radica en preservar las relaciones locales entre puntos, es decir, que objetos similares en el espacio original permanezcan cercanos en el espacio reducido.
+
+Uniform Manifold Approximation and Projection (UMAP): al igual que t-SNE, es una técnica no lineal que busca representar los datos en pocas dimensiones manteniendo tanto la estructura local como la global. UMAP destaca por su eficiencia computacional y por ofrecer representaciones más estables y escalables en comparación con t-SNE.
+
+En este trabajo se aplicarán y compararán estos tres métodos con el fin de explorar su utilidad en la representación y análisis de datos multidimensionales, destacando sus ventajas, limitaciones y diferencias en cuanto a resultados.
+
+### Análisis exploratorio de datos
+
+La base "loan_approval_dataset" es un conjunto de datos financieros y de otro tipo, utilizada para determinar la elegibilidad de individuos u organizaciones para obtener créditos de una institución financiera. Se puede obtener de www.kaggle.com. 
+
+Está compuesta por 12 variables y 4269 registros. Nueve variables son numéricas y tres categóricas. La variable loan_status es una variable de respuesta que indica si al individuo le fue aprobado (approved) o negado (rejected) el préstamo.
+
+```{r include=FALSE}
+pca_df <- read_csv("loan_approval_dataset.csv")
+```
+
+
+```{r echo=FALSE}
+glimpse(pca_df)
+```
+
+La base está muy limpia pues no presenta datos ausentes, tal como demuestra el análisis con visdat.
+
+```{r echo=FALSE, fig.cap= "Análisis de datos ausentes"}
+vis_dat(pca_df)
+```
+
+
+La exploración de las variables no muestra problemas relevante. Tres variables tienen outliers, pero representan una proporción pequeña de las observaciones. 
+
+```{r echo=FALSE, message=FALSE, fig.cap= "Descriptivo de las variables numéricas"}
+dlookr::diagnose_numeric(pca_df)
+```
+
+
+Elaboramos histogramas de las variables para observar su distribución. 
+
+```{r echo=FALSE, fig.cap = "Histogramas de las variables numéricas"}
+funModeling::plot_num(pca_df, bins = 5)
+```
+
+
+El análisis exploratorio no muestra problemas con las variables para ser procesadas en métodos de reducción de dimensiones. 
+
+# Objetivo
+
+El objetivo de este trabajo es el de aplicar los tres métodos de reducción de dimensiones revisados en clase: análisis de componentes principales (PCA), aproximación y proyección de variedad uniforme (UMAP) y incrustación de vecinos estocásticos distribuidos en t (t-SNE) a la base de datos asignada por el profesor. Interpretaremos y compararemos entre sí los resultados de los tres métodos.   
+
+
+###  Modelo PCA
+
+En esta sección aplicaremos el modelo PCA a la base de datos asignada. Para ello se recodificarán las variables categóricas education y self_employement como numéricas, asignando valores de 0 y 1. Por su parte, la variable respuesta se codificará como factor. 
+
+```{r include=FALSE}
+pca_df$education <- recode(pca_df$education,"Graduate"=1, "Not Graduate"=0)
+pca_df$self_employed <- recode(pca_df$self_employed,"No"=0, "Yes"=1)
+
+```
+```{r include=FALSE}
+pca_df <- pca_df %>% 
+  mutate(loan_status = relevel(as.factor(loan_status), "Approved", "Rejected"))
+```
+
+Se hará una exploración de la correlación de las variables para asegurarnos que la base es adecuada para el método PCA.
+
+
+```{r include=FALSE}
+cor1_data<-cor(pca_df[,-12],method="spearman")
+cor1_data
+```
+
+```{r echo=FALSE, fig.cap= "Matriz de correlaciones"}
+ggcorrplot::ggcorrplot(corr = cor1_data,
+                       type = "lower", 
+                       show.diag = TRUE,
+                       lab = TRUE, 
+                       lab_size = 3)
+```
+La matriz de correlaciones muestra que cinco variables presentan correlaciones de medias a altas, mientras que otras cinco muestran correlaciones muy bajas. Para verificar que la base es apta para PCA calculamos el determinante de la matriz y el estadístico de Barttlet. Ambos indican que la base es apropiada para el método. 
+
+```{r}
+det(cor1_data)
+```
+```{r warning=FALSE}
+psych::cortest.bartlett(cor1_data,n=dim(df)[1])
+```
+
+El PCA muestra que el primer componente explica 40.8% de la varianza, mientras que los siguientes 5 rondan el 9% cada uno, de tal manera que para superar 80% de la varianza explicada, se deberían incluir 6 de los 11 componentes. 
+ 
+```{r include=FALSE, warning=FALSE}
+pca_fit <- pca_df %>%
+  select(1:11) %>%
+  scale() %>%
+  prcomp()
+```
+```{r include=FALSE}
+str(pca_fit)
+```
+```{r include=FALSE}
+pca_fit
+```
+```{r echo=FALSE, warning=FALSE}
+pca_fit %>%
+  tidy("pcs") %>% print(n=Inf)
+```
+
+
+```{r echo=FALSE, warning=FALSE, fig.cap = "Gráfica de codo"}
+pca_fit %>%
+  tidy("pcs") %>%
+  ggplot(aes(x=PC, y=percent))+
+  geom_col(fill="magenta", alpha=0.7) +
+  geom_point(linewidth=2) +
+  geom_line(color="darkred", size=1.1)+
+  scale_y_continuous(labels=scales::label_percent(),
+                     breaks = scales::breaks_pretty(n=6))+
+  labs(y= "Varianza explicada", title="Gráfico de codo")
+
+```
+
+
+
+
+
+```{r echo=FALSE, fig.cap = "Gráfico de varianza acumulada"}
+pca_fit %>%
+  tidy("pcs") %>%
+  ggplot(aes(x=PC, y=cumulative))+
+  geom_col(fill="#CC0033", alpha=0.7) +
+  geom_point(size=2) +
+  geom_line(color="darkviolet", size=1.1)+
+  scale_y_continuous(labels=scales::label_percent(),
+                     breaks = scales::breaks_pretty(n=6))+
+  labs(y= "Varianza explicada acumulada",title="Varianza acumulada")
+```
+```{r include=FALSE}
+pca_fit %>%
+  augment(pca_df) %>%
+  print(n=20)
+```
+```{r include=FALSE}
+variance_exp <- pca_fit %>%  
+  tidy("pcs") %>% 
+  pull(percent)
+variance_exp
+```
+
+Al graficar los dos primeros componentes no es posible obervar ningún patrón de agrupamiento, ni aún agrenado la variable de respuesta. 
+
+```{r echo=FALSE}
+pca_fit %>%
+  augment(pca_df) %>%
+  rename_with(function(x){gsub(".fitted","",x)}) %>%
+  ggplot(aes(x = PC1, y = PC2, color=loan_status))+
+  geom_point()+
+  labs(x = paste0("PC1: ",round(variance_exp[1]*100), "%"),
+       y = paste0("PC2: ",round(variance_exp[2]*100), "%"))+
+  labs(title="Gráfica de componentes principales")
+```
+
+La gráfica de boxplot del primer componente muestra que los grupos basados en la variable de respuesta se distribuyen de forma muy parecida. 
+
+
+```{r echo=FALSE, fig.cap="Boxplot del primer componente"}
+pca_fit %>%
+  augment(pca_df) %>%
+  rename_with(function(x){gsub(".fitted","",x)}) %>%
+  ggplot(aes(x = loan_status, y = PC1, color=loan_status))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position=position_jitterdodge())+
+  labs(y = paste0("PC1: ",round(variance_exp[1]*100), "%"))+
+  theme(legend.position = "top")
+```
+
+En el boxplot del segundo componente se ve algo más de diferencia entre los grupos, pero recordemos que este segundo componente apenas explica el 9% de la varianza.
+
+```{r echo=FALSE,fig.cap="Boxplot del segundo componente"}
+pca_fit %>%
+  augment(pca_df) %>%
+  rename_with(function(x){gsub(".fitted","",x)}) %>%
+  ggplot(aes(x = loan_status, y = PC2, color=loan_status))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_point(position=position_jitterdodge())+
+  labs(y = paste0("PC2: ",round(variance_exp[2]*100), "%"))+
+  theme(legend.position = "top")
+```
+
+```{r include=FALSE}
+lads_recipe <-
+  recipe(~., data = pca_df) %>% 
+  update_role(loan_status, new_role = "id") %>% 
+  step_normalize(all_predictors()) %>%
+  step_pca(all_predictors(), id = "pca") %>% 
+  prep()
+```
+```{r echo=FALSE}
+lads_pca <- 
+  lads_recipe %>% 
+  tidy(id = "pca") 
+```
+
+En el primer componente se observa una fuerte contribución de variables que tienen que ver con la magnitud de los activos del solicitante de crédito, su ingreso y el monto solicitado. 
+
+
+
+```{r}
+lads_pca %>%
+  filter(component %in% paste0("PC", 1:6)) %>%
+  mutate(component = fct_inorder(component)) %>%
+  ggplot(aes(value, terms, fill = terms)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~component, nrow = 1) +
+  labs(y = NULL)
+```
+
+
+```{r include=FALSE}
+pca_df2 <- cbind(pca_df, pca_fit$x)
+head(pca_df2)
+```
+
+
+El gráfico de ggpairs muestra que ningún componente, del 1 al 6, permite separar claramente los individuos por la variable de respuesta. 
+
+```{r echo=FALSE, fig.cap="Gráficas ggpairs",message=FALSE,warning=FALSE}
+ggpairs(pca_df2, mapping = aes(color = loan_status),columns = seq(13,18))
+```
+```{r include=FALSE}
+pca_wider <- lads_pca %>% 
+  tidyr::pivot_wider(names_from = component, id_cols = terms)
+```
+```{r include=FALSE}
+arrow_style <- arrow(length = unit(0.001, "inches"),
+                     type = "closed")
+```
+
+
+
+El gráfico biplot muestra la magnitud de la contribución de cada variable en los dos primeros componentes. Nuevamente se observa que las variables relacionadas con el valor de los activos, el ingreso y el monto del crédito contribuyen de manera imporante al primer componente. 
+
+```{r include=FALSE}
+res.pca = PCA(pca_df[,-12],  scale.unit=TRUE) 
+
+```
+
+```{r echo=FALSE, fig.cap="Biplot, componentes 1 y 2"}
+fviz_pca_var(res.pca,
+             alpha.var = "contrib",
+             col.var = "contrib", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             title = 'Influencia de las variables en PCA1 y PCA2',
+             repel = TRUE)
+
+```
+Tampoco un gráfico de elipse muestra una buena separación por la variable de respuesta. 
+
+```{r echo=FALSE,fig.cap="Diagrama de elipses"}
+ggord(res.pca, pca_df$loan_status)
+```
+Finalmente, el gráfico biplot con los individuos no permite identificar una separación por la variable respuesta. 
+
+```{r echo=FALSE, message=FALSE}
+fviz_pca_biplot(res.pca, repel = TRUE,
+                col.var = "blue", 
+                col.ind = pca_df$loan_status, 
+                palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+                addEllipses = TRUE, ellipse.level = 0.95)
+```
+
+### Conclusión del método PCA.
+
+Solo el primer componente explica un porcentaje de varianza considerable (40%), los siguientes 5 componentes explican apenas alrededor de 9% de la varianza, de tal manera que se requieren 6 componentes para explicar una proporción mayor al 80%. PCA permite reducir de 11 a 6 el número de componentes, podría ser útil para un número considerable de sujetos, pues reduciría la demanda de computación. Sin embargo, PCA no demostró ser útil para separar a los individuos por la variable respuesta..
+
+
+#  Modelo t-SNE
+
+El algoritmo t-Distributed Stochastic Neighbor Embedding (t-SNE) es una técnica de reducción de dimensionalidad no lineal, que ayuda a representar datos de alta dimensión en un espacio de baja dimensión —usualmente dos o tres dimensiones— de manera que sea posible visualizarlos y detectar patrones. A diferencia de otros métodos lineales como el Análisis de Componentes Principales (PCA), t-SNE preserva la relación de cercanía entre las observaciones: puntos que son similares en el espacio original tienden a aparecer cercanos en el plano reducido, mientras que los puntos diferentes se alejan.
+
+Al aplicar este algoritmo a nuestra base de datos, se facilita la detección de perfiles de solicitantes con características similares. De esta forma, se pueden explorar las diferencias entre clientes con préstamos abrobados y rechazados y se podría ayudar a comprender la estructura que dicta las decisiones de aprobación.
+
+```{r include=FALSE}
+
+library(tidyverse)
+library(tidymodels)
+library(modeldata)
+library(embed)
+library(tsne)
+library(uwot)
+library(scattermore)
+library(readr)
+library(Rtsne)
+library(gganimate)
+library(data.table)
+library(gifski)
+library(png)
+
+# Carga datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# Revisa estructura
+glimpse(df)
+
+# Selecciona variables numericas y estandariza
+df_num <- df %>%
+  dplyr::select(where(is.numeric)) %>%
+  scale()  
+
+#Aplicar t-SNE con parámetros iniciales
+set.seed(123)
+tsne_res <- Rtsne(
+  X = df_num,
+  perplexity = 30,
+  eta = 200,
+  max_iter = 500,
+  check_duplicates = FALSE
+)
+
+#Crear dataframe con resultados
+datos <- data.frame(
+  Rtsne1 = tsne_res$Y[,1],
+  Rtsne2 = tsne_res$Y[,2],
+  loan_status = df$loan_status
+)
+
+
+```
+
+```{r message=FALSE, warning=FALSE}
+#Visualización
+ggplot(datos, aes(x = Rtsne1, y = Rtsne2, color = loan_status)) +
+  geom_point(size = 1.5) +
+  labs(title = "Loan Approval Dataset - tSNE (perplexity=30, eta=200)") +
+  theme_minimal()
+
+```
+
+
+En la gráfica se observan agrupaciones visibles de solicitudes de préstamo, aunque no están completamente separadas. Hay zonas donde predominan los aprobados, por ejemplo en la parte central e izquierda, y otras donde predominan los rechazados, como en la parte superior y derecha. Sin embargo, también existe una mezcla considerable, lo que refleja que hay clientes con perfiles numéricamente similares pero con resultados distintos en la decisión del préstamo. Esto indica que el algoritmo t-SNE no actúa como un clasificador, pero muestra la estructura de los datos y muestra que las decisiones de aprobación sí se reflejan en las variables numéricas consideradas, aunque no de manera perfecta. 
+
+A continuacion se construye una cuadrícula de combinaciones de parámetros para el algoritmo t-SNE, en particular los valores de perplexity y eta (tasa de aprendizaje). Con la función expand.grid se generan todas las posibles combinaciones entre perplexity = 10, 20, 30, 40 y eta = 50, 100, 200, lo que permite ejecutar el modelo varias veces con diferentes configuraciones. De esta manera se pueden comparar los resultados y observar cómo la variación de estos hiperparámetros influye en la organización de los datos en el plano reducido.
+
+
+```{r include=FALSE}
+set.seed(123)
+Rtsne_params <- expand.grid(
+  perplexity = c(10, 20, 30, 40),
+  eta = c(50, 100, 200)
+)
+
+Rtsne_res <- lapply(seq(nrow(Rtsne_params)), function(i) {
+  Rtsne(
+    X = df_num,
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    max_iter = 500,
+    check_duplicates = FALSE,
+    verbose = TRUE
+  )
+})
+
+d_all <- rbindlist(lapply(seq(nrow(Rtsne_params)), function(i) {
+  data.table(
+    Rtsne1 = Rtsne_res[[i]]$Y[,1],
+    Rtsne2 = Rtsne_res[[i]]$Y[,2],
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    loan_status = df$loan_status
+  )
+}))
+
+
+
+```
+```{r message=FALSE, warning=FALSE}
+ggplot(d_all, aes(x = Rtsne1, y = Rtsne2, color = loan_status)) +
+  geom_scattermore(pointsize = 2) +
+  facet_wrap(eta ~ perplexity, labeller = label_both) +
+  theme_bw() +
+  labs(title = "Exploración de parámetros en Loan Approval Dataset")
+```
+
+
+Se observa para valores bajos de preplexity que los puntos se ven m'as dispersos, las agrupaciones son difusas y no existe una estructura porque se mezclan muchos aprobas y rechazados.
+
+Al aumentar al valor de perplexity a 30 , aparece una separaci'on m'as definida, aunque todav'ia existe superposici'on de algunos datos. 
+
+Si todav'ia se aumenta m'as el valor se generan formas alargadas, ademas de que las clases siguen mezcladas. 
+
+El hecho de que no se vea clara una separacion bien definida entre aprobados/rechazados significa que no se pueden distinguir solamente con las variables numericas.
+
+Aunque si es notable como con parametros intermedios de perplexity y eta aparecen grupos mas organizados, lo que sugiere que si hay perfiles de clientes que tienden mas hacia la aprobacion o el rechazo. 
+
+Se asume entonces que aune t-SNE puede ayudar a darse una idea de que si hay patrones latentes, no logra separarlos. Par esto podrian ser mas utiles modeloos no supercisados de clasificacion para poder realmente predecir si el prestamo sera aprobado a rechazado.
+
+
+```{r include=FALSE}
+#ANIMACIONES
+
+colores_p = c('#1F77B4','#D62728')
+names(colores_p) = c(" Approved"," Rejected")
+
+anim_plot_p<-d_all %>% 
+  filter(perplexity == 10 | perplexity == 20 | perplexity == 30 | perplexity == 40) %>% 
+  mutate(parametros = factor(paste('perplexity:', perplexity, 'eta:', eta))) %>% ggplot() +
+  geom_scattermore(
+    mapping = aes(x = Rtsne1, y = Rtsne2, col = loan_status),
+    pointsize = 2
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  ) +
+  theme_bw()+
+  labs(title = 'Loan Approval Dataset - tSNE (Variables Numéricas)')+
+  scale_color_manual(values = colores_p) + 
+  transition_states(parametros, transition_length = 5, state_length = 5) +
+  labs(subtitle = '{closest_state}')
+
+animate(anim_plot_p, nframes = 300,renderer = gifski_renderer())
+
+
+
+```
+
+```{r include=FALSE}
+
+# 1. Cargar datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# 2. Crear receta para transformar variables
+rec <- recipe(loan_status ~ ., data = df) %>%
+  step_dummy(all_nominal_predictors()) %>%  # convierte categóricas en dummies
+  step_normalize(all_numeric_predictors())  # normaliza todas las numéricas
+
+# 3. Preparar y hornear la receta
+df_num <- prep(rec) %>% bake(new_data = NULL)
+
+# 4. Aplicar t-SNE con parámetros base
+set.seed(123)
+tsne_res <- Rtsne(
+  X = df_num %>% select(-loan_status), # todas las predictoras ya numéricas
+  perplexity = 30,
+  eta = 200,
+  max_iter = 500,
+  check_duplicates = FALSE
+)
+
+# 5. Dataframe con resultados + etiqueta original
+datos <- data.frame(
+  Rtsne1 = tsne_res$Y[,1],
+  Rtsne2 = tsne_res$Y[,2],
+  loan_status = df$loan_status
+)
+
+
+
+```
+
+```{r message=FALSE, warning=FALSE}
+# 6. Visualización
+ggplot(datos, aes(x = Rtsne1, y = Rtsne2, color = loan_status)) +
+  geom_point(size = 1.5) +
+  labs(title = "Loan Approval Dataset - tSNE con variables categóricas incluidas, (perplexity=30, eta=200)") +
+  theme_minimal()
+```
+
+
+
+La inclusión de las variables categóricas permite que el algoritmo tenga más información para organizar los puntos, y eso se refleja en la aparición de grupos más claros ("Petalos"). Estos clústeres corresponden a perfiles de solicitantes que comparten características similares (ejemplo: nivel educativo, condición de autoempleo, ingresos, activos). Aun así, dentro de cada clúster hay mezcla de puntos rojos y azules, lo cual indica que los perfiles de los clientes utilizando las variables categoricas como education y self_employed no son utiles para realizar la agrupaci'on de los datos. 
+
+
+
+De igual forma se exploran mas combinaciones de valores para perplexity y eta:
+
+```{r include=FALSE}
+# Exploración de parámetros con variables categóricas incluidas
+set.seed(123)
+Rtsne_params <- expand.grid(
+  perplexity = c(10, 20, 30, 40),
+  eta = c(50, 100, 200)
+)
+
+Rtsne_res <- lapply(seq(nrow(Rtsne_params)), function(i) {
+  Rtsne(
+    X = df_num %>% select(-loan_status),
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    max_iter = 500,
+    check_duplicates = FALSE,
+    verbose = TRUE
+  )
+})
+
+d_all <- rbindlist(lapply(seq(nrow(Rtsne_params)), function(i) {
+  data.table(
+    Rtsne1 = Rtsne_res[[i]]$Y[,1],
+    Rtsne2 = Rtsne_res[[i]]$Y[,2],
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    loan_status = df$loan_status
+  )
+}))
+
+
+```
+```{r echo=FALSE, warning=FALSE}
+ggplot(d_all, aes(x = Rtsne1, y = Rtsne2, color = loan_status)) +
+  geom_scattermore(pointsize = 2) +
+  facet_wrap(eta ~ perplexity, labeller = label_both) +
+  theme_bw() +
+  labs(title = "Exploración de parámetros en Loan Approval Dataset (con categóricas)")
+
+```
+
+
+
+Explorando los resultados, dentro de cada clúster aun hay mezcla de puntos rojos y azules. Se puede concluir que los perfiles de los clientes con la informacion que se encuentra en la base de datos no garantizan por sí solos la aprobación o rechazo: hay individuos con características similares pero con decisiones diferentes. Esto refleja que la decisión final del préstamo es multifactorial y puede incluir criterios adicionales que no e incluyen en la base de datos.
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+#ANIMACIONES
+
+colores_p = c('#1F77B4','#D62728')
+names(colores_p) = c(" Approved"," Rejected")
+
+anim_plot_p<-d_all %>% 
+  filter(perplexity == 10 | perplexity == 20 | perplexity == 30 | perplexity == 40 ) %>% 
+  mutate(parametros = factor(paste('perplexity:', perplexity, 'eta:', eta))) %>% ggplot() +
+  geom_scattermore(
+    mapping = aes(x = Rtsne1, y = Rtsne2, col = loan_status),
+    pointsize = 2
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  ) +
+  theme_bw()+
+  labs(title = 'Loan Approval Dataset - tSNE (Con Variables Categóricas)')+
+  scale_color_manual(values = colores_p) + 
+  transition_states(parametros, transition_length = 5, state_length = 5) +
+  labs(subtitle = '{closest_state}')
+
+animate(anim_plot_p, nframes = 300,renderer = gifski_renderer())
+
+
+
+```
+
+A continuación, implementaremos t-SNE en 3 dimensiones, para explorar estructuras que en tsne-2D no se logren apreciar 
+
+Comenzamos nuestra visualización incluyendo las variables categoricas en el modelo, con parametros fijos de perplexity=30, eta=200.
+
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+#PARA 3 DIMENSIONES, con variables categoricas
+library(plotly)
+
+# 1. Cargar datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# 2. Crear receta para transformar variables
+rec <- recipe(loan_status ~ ., data = df) %>%
+  step_dummy(all_nominal_predictors()) %>%  # convierte categóricas en dummies
+  step_normalize(all_numeric_predictors())  # normaliza todas las numéricas
+
+# 3. Preparar y hornear la receta
+df_num_cat <- prep(rec) %>% bake(new_data = NULL)
+
+#HASTA AQUI LOS DATOS YA ESTÁN LISTOS, INCLUYENDO CATEGORICAS (df_num_cat)
+
+# 4. Aplicar t-SNE con parámetros base (3D)
+set.seed(123)
+tsne_res_3D <- Rtsne(
+  X = df_num_cat %>% select(-loan_status), # todas las predictoras ya numéricas
+  dims=3,
+  perplexity = 30,
+  eta = 200,
+  max_iter = 500,
+  check_duplicates = FALSE
+)
+
+# 5. Dataframe con resultados + etiqueta original
+datos_3D <- data.frame(
+  Rtsne1 = tsne_res_3D$Y[,1],
+  Rtsne2 = tsne_res_3D$Y[,2],
+  Rtsne3 = tsne_res_3D$Y[,3],
+  loan_status = df$loan_status
+)
+
+plot_ly(
+  datos_3D, 
+  x = ~Rtsne1, y = ~Rtsne2, z = ~Rtsne3,
+  color = ~loan_status,
+  colors = c('#1F77B4','#D62728'),   
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 3)
+) %>%
+  layout(title = "Loan Approval Dataset - tSNE (Con Variables Categóricas)",
+         legend = list(
+      title = list(text = "Loan Status"),
+      orientation = "v",
+      y = 1, x = 1
+    )
+    )
+
+
+
+```
+
+De la grafica anterior notamos que lo que habiamos llamado "petalos" en el caso 2D, toman forma de "gusanos" en el caso 3D, lo que nos permite una mejor visualización de los datos
+
+A continuación variaremos los parametros (perplexity, eta), para explorar aún más nuestros datos
+
+```{r include=FALSE,echo=FALSE,message=FALSE,warning=FALSE}
+#BUENO HASTA AHORA
+#PARA 3 DIMENSIONES, con variables categoricas, CON GRID
+
+# 1. Cargar datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# 2. Crear receta para transformar variables
+rec <- recipe(loan_status ~ ., data = df) %>%
+  step_dummy(all_nominal_predictors()) %>%  # convierte categóricas en dummies
+  step_normalize(all_numeric_predictors())  # normaliza todas las numéricas
+
+# 3. Preparar y hornear la receta
+df_num_cat <- prep(rec) %>% bake(new_data = NULL)
+
+#HASTA AQUI LOS DATOS YA ESTÁN LISTOS, INCLUYENDO CATEGORICAS (df_num_cat)
+
+#CREAMOS EL GRID Y APLICAMOS TSNE 3D
+
+set.seed(123)
+Rtsne_params <- expand.grid(
+  perplexity = c(10, 20, 30, 40),
+  eta = c(50, 100, 200)
+)
+
+Rtsne_res <- lapply(seq(nrow(Rtsne_params)), function(i) {
+  Rtsne(
+    X = df_num_cat  %>% select(-loan_status),
+    dims=3,
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    max_iter = 500,
+    check_duplicates = FALSE,
+    verbose = TRUE
+  )
+})
+
+
+#Crear dataframe con resultados
+d_all_3D_C <- rbindlist(lapply(seq(nrow(Rtsne_params)), function(i) {
+  data.table(
+    Rtsne1 = Rtsne_res[[i]]$Y[,1],
+    Rtsne2 = Rtsne_res[[i]]$Y[,2],
+    Rtsne3 = Rtsne_res[[i]]$Y[,3],
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    loan_status = df$loan_status
+  )
+}))
+
+
+
+```
+
+
+Y graficaremos de manera interactiva t-sne, para los distintos valores de los parametros (perplexity, eta). Esta gráfica se puede observar en el rmd.
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+#INTERACTIVA 3D, CON VARIABLES CATEGORICAS
+plot_ly(
+  d_all_3D_C,
+  x = ~Rtsne1, y = ~Rtsne2, z = ~Rtsne3,
+  color = ~loan_status,
+  colors = c('#1F77B4','#D62728'), 
+  frame = ~paste("Perplexity", perplexity, "Eta", eta),
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 3)
+) %>%
+  layout(title = "Loan Approval Dataset - tSNE (Con Variables Categóricas)",
+         legend = list(
+      title = list(text = "Loan Status"),
+      orientation = "v",
+      y = 1, x = 1
+    )
+    )
+```
+
+De las graficas anteriores observamos una mejor separación en grupos para los parametros (perplexity=40, eta=100), 
+
+Ahora implementamos T-sne 3D, pero utilizando unicamente las variables numericas, con valores fijos de parametros (perplexity=30, eta= 200)
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+#3D Sin variables categoricas
+
+library(gganimate)
+
+# Carga datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# Selecciona variables numericas y estandariza
+df_num <- df %>%
+  dplyr::select(where(is.numeric)) %>%
+  scale()  
+
+#HASTA AQUÍ LOS DATOS YA ESTÁN LISTOS, SIN VARIABLES CATEGORICAS (df_num)
+
+#Aplicar t-SNE con parámetros iniciales
+set.seed(123)
+tsne_res <- Rtsne(
+  X = df_num,
+  dims=3,
+  perplexity = 30,
+  eta = 200,
+  max_iter = 500,
+  check_duplicates = FALSE
+)
+
+#Crear dataframe con resultados
+datos_3D_SN <- data.frame(
+  Rtsne1 = tsne_res$Y[,1],
+  Rtsne2 = tsne_res$Y[,2],
+  Rtsne3 = tsne_res$Y[,3],
+  loan_status = df$loan_status
+)
+
+plot_ly(
+  datos_3D_SN, 
+  x = ~Rtsne1, y = ~Rtsne2, z = ~Rtsne3,
+  color = ~loan_status,
+  colors = c('#1F77B4','#D62728'),   
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 3)
+) %>%
+  layout(title = "Loan Approval Dataset - tSNE (Variables Numéricas)")
+
+
+
+```
+
+Podemos apreciar de una mejor manera como se agrupan los datos, y porque parecen superponerse al verse unicamente en 2 dimensiones. Notamos que los datos "aprobados" parecen envolver a los "rechazados"
+
+Jugamos nuevamente con los parametros (perplexity, eta), para obtener distintas visualizaciones.
+
+
+```{r include=FALSE, echo=FALSE, warning=FALSE,message=FALSE}
+#3D Sin variables categoricas, CON GRID
+
+# Carga datos
+df <- read.csv("loan_approval_dataset.csv")
+
+# Selecciona variables numericas y estandariza
+df_num <- df %>%
+  dplyr::select(where(is.numeric)) %>%
+  scale()  
+
+#HASTA AQUÍ LOS DATOS YA ESTÁN LISTOS, SIN VARIABLES CATEGORICAS (df_num)
+
+#CREAMOS EL GRID Y APLICAMOS TSNE 3D
+
+set.seed(123)
+Rtsne_params <- expand.grid(
+  perplexity = c(10, 20, 30, 40),
+  eta = c(50, 100, 200)
+)
+
+Rtsne_res <- lapply(seq(nrow(Rtsne_params)), function(i) {
+  Rtsne(
+    X = df_num,
+    dims=3,
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    max_iter = 500,
+    check_duplicates = FALSE,
+    verbose = TRUE
+  )
+})
+
+
+#Crear dataframe con resultados
+d_all_3D_SC <- rbindlist(lapply(seq(nrow(Rtsne_params)), function(i) {
+  data.table(
+    Rtsne1 = Rtsne_res[[i]]$Y[,1],
+    Rtsne2 = Rtsne_res[[i]]$Y[,2],
+    Rtsne3 = Rtsne_res[[i]]$Y[,3],
+    perplexity = Rtsne_params$perplexity[i],
+    eta = Rtsne_params$eta[i],
+    loan_status = df$loan_status
+  )
+}))
+
+
+```
+
+Graficamos los diferentes resultados del modelo t-sne, para los distintos valores de los parametros, en esta grafica interactiva
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+#INTERACTIVA 3D, SIN VARIABLES CATEGORICAS
+plot_ly(
+  d_all_3D_SC,
+  x = ~Rtsne1, y = ~Rtsne2, z = ~Rtsne3,
+  color = ~loan_status,
+  colors = c('#1F77B4','#D62728'), 
+  frame = ~paste("Perplexity", perplexity, "Eta", eta),
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 3)
+) %>%
+  layout(title = "t-SNE (Variables Numéricas)",
+         legend = list(
+      title = list(text = "Loan Status"),
+      orientation = "v",
+      y = 1, x = 1
+    )
+    )
+```
+
+Notamos una evidente separación por la mitad, para parametros (perplexity=10, eta=100), aunque con algunos puntos "fuera" de su grupo. 
+
+
+Podemos concluir que el método t-sne es una buena herramienta para visualizar datos de alta dimensionalidad en baja dimensionalidad, sin embargo es evidente que t-sne 3D brinda una mejor visualización que t-sne 2D, ya que nos permite detectar las estructuras escondidas de los datos proyectados en un plano.
+
+
+
+##  Modelo UMAP
+
+
+### Modelo UMAP con 3 dimensiones
+
+A partir de los resultados obtenidos con el modelo bidimensional, se procedió a implementar una variante de tres dimensiones con el fin de evaluar si, en cortes adicionales entre los componentes, UMAP lograba una mejor diferenciación de la variable respuesta. Para este ejercicio, se excluyó la variable income_annum, dado que mostraba una correlación predominante con la aprobación del crédito.
+
+### Validación cruzada
+
+Para el ajuste de hiperparámetros se utilizó una búsqueda en malla, en la cual se incrementaron los valores de n_neighbors y, de manera paralela, los de min_dist, en comparación con los parámetros estándar definidos por UMAP. La distancia utilizada fue "euclidean".
+
+n_neighbors = c(15, 20, 30)
+min_dist = c(0.05, 0.075, 0.1)
+
+```{r include=FALSE}
+
+loan_scaled <- 
+  readr::read_csv("loan_approval_dataset.csv") %>% 
+  select(-education,-self_employed, -income_annum) %>%
+  mutate( across(where(is.numeric), scale) ) 
+  
+
+
+df <-loan_scaled
+
+umap_params = expand.grid(n_neighbors = c(15, 20, 30) , min_dist = c(0.05, 0.075, 0.1)   ) #c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 0.75, 1.1)
+
+#umap_params = expand.grid(n_neighbors = c(3, 5, 8, 12, 20, 30) , min_dist = c(0.001, 0.005, 0.01, 0.05, 0.1)   ) #c(0.001, 0.01, 0.05, 0.1, 0.3, 0.5, 
+
+#umap_params = expand.grid(n_neighbors = c(10),min_dist = c(0.5))
+
+umaps = lapply(seq(nrow(umap_params)), function(i) {
+    emb = umap(
+      X = df[,-1],
+      n_components = 3,
+      metric = "euclidean",  #manhattan hamming
+      n_neighbors = umap_params$n_neighbors[i],
+      min_dist  = umap_params$min_dist[i]
+      )
+
+  return(emb)
+})
+
+d = rbindlist(lapply(seq(nrow(umap_params)), function(i) {
+  data.table(
+    x = umaps[[i]][,1],
+    y = umaps[[i]][,2],
+    z = umaps[[i]][,3],
+    n_neighbors = umap_params$n_neighbors[i],
+    min_dist = umap_params$min_dist[i],
+    group =  df$loan_status
+  )
+}))
+
+plot_db<-
+  d %>% 
+    group_by(n_neighbors,min_dist) %>% 
+    mutate( slice_num =  cur_group_id()) %>% 
+    ungroup
+
+cat("Transformacion UMAP con valiación cruzada en 3 dimensiones completada!\n")
+```
+
+Se generaron las proyecciones de los componentes UMAP1 vs. UMAP2 para cada combinación de parámetros evaluada. Los resultados obtenidos muestran patrones visuales muy similares a los observados en el modelo base, sin evidenciar mejoras significativas en la separación de la variable respuesta.
+
+
+```{r echo=FALSE, message=FALSE}
+
+plot_db %>%
+  dplyr::filter(slice_num %in% c( 1:9 ) ) %>% 
+ggplot() +
+  geom_scattermore(
+    mapping = aes(x = x, y = y,colour=group),
+    pointsize = 2
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  ) +
+  facet_wrap(
+             min_dist ~ n_neighbors 
+             ,labeller = label_both
+             ,scales = "free"
+             ) +
+  theme_bw() +
+  labs(title = "Loan Approval dataset: UMAP1 vs. UMAP2")
+```
+
+Se analizaron las proyecciones de los componentes UMAP1 vs. UMAP3 para cada combinación de parámetros. En este caso, se observó una mayor separación en la variable respuesta al utilizar distancias más amplias (min_dist = 0.1) junto con vecindarios ligeramente mayores (n_neighbors = 20–30).
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+plot_db %>%
+  dplyr::filter(slice_num %in% c( 1:9 ) ) %>% 
+ggplot() +
+  geom_scattermore(
+    mapping = aes(x = x, y = z,colour=group),
+    pointsize = 2
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  ) +
+  facet_wrap(
+             min_dist ~ n_neighbors 
+             ,labeller = label_both
+             ,scales = "free"
+             ) +
+  theme_bw() +
+  labs(title = "Loan Approval dataset: UMAP1 vs. UMAP3")
+```
+
+Se analizaron las proyecciones de los componentes UMAP2 vs. UMAP3 para cada combinación de parámetros. En este caso, se observó una mayor separación en la variable respuesta al utilizar distancias más amplias (min_dist = 0.1) junto con vecindarios ligeramente mayores (n_neighbors = 20–30).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+plot_db %>%
+  dplyr::filter(slice_num %in% c( 1:9 ) ) %>% 
+ggplot() +
+  geom_scattermore(
+    mapping = aes(x = y, y = z,colour=group),
+    pointsize = 2
+  ) +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "none"
+  ) +
+  facet_wrap(
+             min_dist ~ n_neighbors 
+             ,labeller = label_both
+             ,scales = "free"
+             ) +
+  theme_bw() +
+  labs(title = "Loan Approval dataset: UMAP2 vs. UMAP3")
+```
+
+Al incrementar la dimensionalidad a tres componentes, se observó una mejor separación de la variable respuesta. Este resultado sugiere que la estructura de los datos presenta una mayor complejidad, la cual no puede ser representada de manera adecuada en un espacio bidimensional.
+
+Finalmente, con el propósito de comprender con mayor profundidad la estructura revelada por UMAP, se calcularon las diez principales correlaciones entre las variables originales y los tres componentes obtenidos, considerando el caso con min_dist = 0.1 y n_neighbors = 30. Como se aprecia en la tabla, algunos features presentan correlaciones destacadas con los componentes 2 y 3, lo que aporta evidencia adicional sobre la complejidad de la estructura latente en los datos.
+
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+
+final_recipe <-
+  recipe(~ ., data = loan_scaled) %>%
+  step_nzv(all_predictors()) %>%
+  #step_normalize(all_numeric_predictors()) %>%
+  #step_corr(all_numeric_predictors(), threshold = 0.85) %>%
+  step_umap(all_predictors(), 
+            num_comp = 3,
+            neighbors = 30,
+            min_dist = 0.1,
+            learn_rate = 1,
+            metric = "euclidean" ,  # metric = c("euclidean", "manhattan", "cosine", "hamming")
+            epochs = 400,
+            seed = c(24,123)
+            )
+
+set.seed(24)
+
+#seed 19, slice 2 or100
+
+# Prep the recipe (fit the preprocessing steps including UMAP)
+final_prep <- prep(final_recipe, training = loan_scaled)
+
+# Transform the data using the prepped recipe
+umap_results <- bake(final_prep, new_data = loan_scaled)
+
+analyze_umap_correlations <- function(original_data, umap_results, n_top = 10) {
+  
+  # Combine original features with UMAP components
+  combined_data <- bind_cols(
+    original_data %>% select(where(is.numeric)),
+    umap_results %>% select(starts_with("UMAP"))
+  )
+  
+  # Get feature names and UMAP component names
+  feature_names <- original_data %>% select(where(is.numeric)) %>% names()
+  umap_names <- umap_results %>% select(starts_with("UMAP")) %>% names()
+  
+  # Calculate correlations manually
+  correlations <- tibble()
+  
+  for (umap_comp in umap_names) {
+    for (feature in feature_names) {
+      cor_val <- cor(combined_data[[feature]], combined_data[[umap_comp]], use = "complete.obs")
+      
+      correlations <- bind_rows(
+        correlations,
+        tibble(
+          term = feature,
+          component = umap_comp,
+          correlation = cor_val
+        )
+      )
+    }
+  }
+  correlations <- correlations %>%
+    filter(!is.na(correlation)) %>%
+    group_by(component) %>%
+    mutate(abs_correlation = abs(correlation)) %>%
+    slice_max(abs_correlation, n = n_top) %>%
+    arrange(component, desc(abs_correlation))
+  
+  return(correlations)
+}
+
+analyze_umap_correlations( loan_scaled , umap_results) %>% 
+  arrange(desc(abs_correlation)) %>% 
+  head(10)
+
+```
+
+En el caso del modelo UMAP en tres dimensiones, no se identificó correlación significativa entre los componentes, lo que permite concluir que cada uno de ellos captura distintos aspectos de la estructura global de los datos.
+
+
+```{r echo=FALSE}
+umap_results %>% 
+  cor(., method="spearman") %>% 
+ggcorrplot::ggcorrplot(corr = . ,
+                       type = "lower", 
+                       show.diag = TRUE,
+                       lab = TRUE, 
+                       lab_size = 3)
+```
+
+
+
+### Conclusiones.
+
+En conclusión, la implementación de UMAP permitió explorar la estructura latente de los datos y visualizar la variable respuesta en un espacio de menor dimensión. El uso de tres dimensiones resultó más adecuado, ya que mejoró la separación de la aprobación del crédito, especialmente en las proyecciones de los componentes 1 vs. 3 y 2 vs. 3. Además, se identificaron features que únicamente se correlacionan con el tercer componente, aportando nueva información al análisis. Finalmente, la matriz de covarianza entre las tres dimensiones se mantuvo cercana a cero, lo que sugiere que los componentes extraídos son prácticamente ortogonales y capturan información complementaria.
+
+
+# Conclusiones generales.
+
+La aplicación de los tres modelos logró una reducción de la dimensionalidad media, al requerirse al menos 6 de los 11 componentes inciales para explicar más del 80% de la viariabilidad. Por su parte, ninguno de los métodos permite una buena separación de los datos por la variable respuesta. Parece ser que en la determinación de aprobar o rechazar la solicitud de crédito se toman en cuenta variables que no están en la base de datos o, bien, la resolución final tiene un alto contenido de subjetividad de quien aprueba. 
+
+El proyecto nos permitió ensayar los métodos de reducción de dimensiones, las características de la base de datos nos llevó a buscar otras alternativas para separar los valores con base en la variable respuesta. 
