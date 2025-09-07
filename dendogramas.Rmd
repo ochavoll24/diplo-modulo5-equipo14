@@ -1,0 +1,221 @@
+---
+title: "Dendogramas"
+author: "Equipo 9"
+date: "2025-09-07"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+###WDBCclustering
+
+```{r include=FALSE}
+library(tidymodels)
+library(tidyverse)
+library(tidyclust)
+library(factoextra)
+library(FactoMineR)
+library(cluster)
+library(mlr)
+library(GGally)
+library(ClusterR)
+library(vegan)
+library(NbClust)
+library(gridExtra)
+library(grid)
+library(lattice)
+require(igraph)
+```
+
+
+
+### Conjunto de datos: loan_aproved_dataset. Es una base de datos de clientes de instituciones financieras. 
+
+```{r include=FALSE}
+df <- read_csv("B:/clope/Documents/R/modulo6/loan_approval_dataset.csv")
+
+```
+
+## Dimensión de la base de datos
+
+```{r}
+df %>% dim()
+
+```
+La base contiene 12 variables, incluida una variable respuesta. Son 4269 renglones. 
+
+## Hacemos un pequeño descriptivo, ya se hizo en el proyecto anterior. 
+
+```{r}
+df %>% glimpse()
+
+```
+## Encabezado de la base de datos. 
+
+```{r echo=FALSE}
+df %>% head()
+
+```
+
+## Se recodificaron las variables education y self_employed, para convertirlas en binarias. 
+
+```{r}
+df$education <- recode(df$education,"Graduate"=1, "Not Graduate"=0)
+df$self_employed <- recode(df$self_employed,"No"=0, "Yes"=1)
+
+```
+
+# Me aseguro de que la variable de salida loan_status sea tratada como factor. 
+
+```{r}
+df <- df %>% 
+  mutate(loan_status = relevel(as.factor(loan_status), "Approved", "Rejected"))
+```
+
+## Me aseguro que la base quedó como la necesito. 
+
+```{r}
+head(df)
+
+```
+
+## Una vista a la distribución de la variable de salida.
+
+```{r echo=FALSE}
+df  %>% count(loan_status)
+
+```
+
+Son 2656 casoa aprovados y 1613 rechazados. 
+
+
+### Eliminamos loan_status, cibil_score, loan_term y self_empoyed porque no contribuyen a la clasificación. 
+
+```{r}
+df1<- df %>% dplyr::select(-loan_status,-cibil_score,-loan_term,-self_employed)
+
+```
+
+### Así queda la base con la que vamos a hacer los dendrogramas. 
+
+```{r}
+head(df1)
+
+```
+
+
+### Calculamos las distancia euclideanas con 5 ligas: promedio, única, completa, Ward y Ward2..
+
+
+```{r}
+dist_df <- dist(scale(df1), method = "euclidean") #dist_df es un vector, con las distancias entre cada observación 
+
+```
+
+
+```{r}
+hc_ave <- hclust(dist_df, method = "average")
+hc_single<-hclust(dist_df, method = "single")
+hc_comp<-hclust(dist_df, method = "complete")
+hc_ward<-hclust(dist_df, method = "ward.D")
+hc_ward2<-hclust(dist_df, method = "ward.D2")
+```
+
+
+### Se calcula la distancia cophenetic de cada liga.
+
+```{r}
+d_ave <- cophenetic(hc_ave)
+d_single <- cophenetic(hc_single)
+d_comp<- cophenetic(hc_comp)
+d_ward<- cophenetic(hc_ward)
+d_ward2<-cophenetic(hc_ward2)
+```
+
+### Comparamos la correlación de cada una de las ligas.
+```{r}
+cbind(cor(dist_df,d_ave),cor(dist_df,d_single),cor(dist_df,d_comp),cor(dist_df,d_ward),cor(dist_df,d_ward2))
+```
+
+La liga que más correlación muestra es la liga completa, muy cerca de la liga promedio.  
+
+Graficamos los dendrogramas. 
+
+```{r}
+plot(hc_ave)
+```
+La l iga promedio se ve muy poco claro. 
+
+
+Probamos la liga simple.
+
+Se alcanzar a ver dos grupos grandes. La muestra tiene muchas observaciones, por eso en la base se ven solo manchas negras, sin embargo, se pueden distinguir dos grupos. 
+
+```{r}
+plot(hc_single)
+
+
+```
+Liga completa
+
+```{r}
+plot(hc_comp)
+
+```
+Con Ward parece que es clara la separación en dos grupos a la altura de 1000.
+
+
+```{r}
+plot(hc_ward)
+
+```
+Con Ward2 se identifican dos grupos a una altura de 100 y tres poco arriba de 50.
+
+```{r}
+plot(hc_ward2)
+```
+
+
+Para comparar usamos el método agnes.
+
+```{r include=FALSE}
+df1<-as.data.frame(scale(df1))
+```
+
+
+```{r}
+ac_metric <- list(
+  complete_ac = agnes(df1, metric = "euclidean", method = "complete")$ac,
+  average_ac = agnes(df1, metric = "euclidean", method = "average")$ac,
+  single_ac = agnes(df1, metric = "euclidean", method = "single")$ac,
+  ward_ac = agnes(df1, metric = "euclidean", method = "ward")$ac
+)
+
+ac_metric
+```
+
+
+```{r}
+plot(agnes(df1, metric = "euclidean", method = "ward"))
+```
+
+
+
+```{r}
+plot(agnes(df1, metric = "euclidean", method = "average"))
+```
+
+Los resultados se ven similares. 
+
+
+```{r}
+plot(diana(df1, metric = "euclidean"))
+```
+
+
+El Método de dendrogramas no es muy claro. Se pueden observar entre dos y tres grupos. La liga es la que mejor permite separar los grupos es Ward. En este caso, sabemos que hay dos grupos, por ello podemos seleccionar Ward. 
+
