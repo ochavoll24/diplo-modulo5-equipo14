@@ -1,0 +1,159 @@
+---
+title: "Mod6"
+output: html_document
+date: "2025-09-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Primera prueba
+
+```{r}
+library(tidyverse)
+library(cluster)
+library(factoextra)
+
+# 1. Cargar dataset
+df <- read.csv("loan_approval_dataset.csv")
+
+glimpse(df)
+
+# 2. Seleccionar solo variables numéricas
+df_num <- df %>% select(where(is.numeric)) %>% na.omit()
+
+# 3. Escalar
+df_scaled <- scale(df_num)
+
+# 4. PAM con k=3 (puedes probar otros valores)
+set.seed(123)
+pam_res <- pam(df_scaled, k = 3)
+
+# 5. Resumen
+summary(pam_res)
+
+# 6. Visualización de clusters
+fviz_cluster(pam_res, data = df_scaled, geom = "point", 
+             ellipse.type = "euclid", palette = "jco") +
+  ggtitle("Clustering K-medoids (PAM) - Loan Dataset")
+
+# 7. Añadir resultado al dataset original
+df_clusters <- df %>%
+  mutate(cluster = pam_res$clustering)
+
+head(df_clusters)
+
+```
+Evaluar con silhouette
+
+```{r}
+pam_res$silinfo$avg.width
+fviz_silhouette(pam_res)
+
+```
+Cruzar clusters con la variable objetivo (Loan_Status)
+
+```{r}
+library(cluster)
+library(factoextra)
+library(dplyr)
+
+# 1. Dataset original
+df <- read.csv("loan_approval_dataset.csv")
+
+# 2. Guardar Loan_Status antes de quitar NAs
+loan_status <- df$loan_status
+
+# 3. Seleccionar numéricas y quitar NAs
+df_num <- df %>% select(where(is.numeric)) %>% na.omit()
+
+# --- Ojo: al usar na.omit() perdimos las mismas filas en loan_status ---
+# 4. Quitar las mismas filas en Loan_Status
+loan_status_clean <- loan_status[complete.cases(df %>% select(where(is.numeric)))]
+
+# 5. Escalar
+df_scaled <- scale(df_num)
+
+# 6. PAM clustering
+set.seed(123)
+pam_res <- pam(df_scaled, k = 3)
+
+# 7. Juntar resultados en un dataframe limpio
+df_clusters <- df_num %>%
+  mutate(cluster = pam_res$clustering,
+         loan_status = loan_status_clean)
+
+# 8. Comparar cluster vs Loan_Status
+table(df_clusters$cluster, df_clusters$loan_status)
+
+
+```
+Caracterizar cada cluster
+
+```{r}
+df_clusters %>%
+  group_by(cluster) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+```
+El método K-medoids (PAM) aplicado al conjunto de datos de préstamos permitió segmentar a los clientes en tres grupos principales. El valor del índice de silhouette fue de 0.17, lo que refleja que la separación entre clusters es débil y que existe traslape entre los grupos. El segundo cluster mostró la mayor cohesión, mientras que el primero y el tercero presentaron observaciones con silhouette cercano a cero o incluso negativo, lo que indica que varios casos podrían pertenecer a un cluster distinto.
+
+Al analizar la variable de estado del préstamo, se observó que los tres grupos contienen tanto aprobaciones como rechazos, lo cual evidencia que los segmentos generados no predicen directamente la aprobación. Más bien, lo que aparece es una clasificación por perfiles financieros: un primer grupo con ingresos altos, préstamos de gran monto y activos elevados, un segundo grupo caracterizado por ingresos bajos, montos reducidos y un CIBIL ligeramente superior, y un tercer grupo intermedio en ingresos y montos de préstamo. Estos resultados sugieren que PAM logra identificar niveles económicos diferenciados, pero no logra una separación clara en términos de la variable de resultado.
+
+En conclusión, el algoritmo PAM ofrece información útil sobre la existencia de segmentos financieros dentro de la base, aunque la calidad de la separación es limitada y no se corresponde de manera directa con la variable de aprobación de préstamos. Esto sugiere que la aprobación depende de más factores que los considerados en el clustering. Una alternativa es emplear H-PAM, que combina el agrupamiento jerárquico con PAM, de modo que los medoides iniciales se seleccionan con base en una estructura jerárquica, lo que puede mejorar la calidad de los grupos.
+
+Una variante como H-PAM podría mejorar la calidad de inicialización de los medoides y lograr una mejor separación.
+
+```{r}
+loan_status <- df$loan_status
+df_num <- df %>% select(where(is.numeric)) %>% na.omit()
+loan_status_clean <- loan_status[complete.cases(df %>% select(where(is.numeric)))]
+
+
+df_scaled <- scale(df_num)
+
+
+dist_matrix <- dist(df_scaled)
+hc <- hclust(dist_matrix, method = "ward.D2")
+
+# Cortar dendrograma en k grupos
+k <- 3
+hc_clusters <- cutree(hc, k = k)
+
+# Seleccionar un representante de cada grupo (medoid inicial)
+init_medoids <- sapply(1:k, function(i) {
+  cluster_points <- which(hc_clusters == i)
+  # Elegir el punto con menor distancia total al resto (medoid)
+  cluster_dist <- as.matrix(dist_matrix)[cluster_points, cluster_points]
+  cluster_points[which.min(rowSums(cluster_dist))]
+})
+
+
+set.seed(123)
+hpam_res <- pam(df_scaled, k = k, medoids = init_medoids)
+
+
+fviz_cluster(hpam_res, data = df_scaled, geom = "point", 
+             ellipse.type = "euclid", palette = "jco") +
+  ggtitle("H-PAM (Ward + PAM) - Loan Dataset")
+
+
+fviz_silhouette(hpam_res)
+
+
+df_hpam <- df_num %>%
+  mutate(cluster = hpam_res$clustering,
+         loan_status = loan_status_clean)
+
+table(df_hpam$cluster, df_hpam$loan_status)
+
+#Resumen por cluster
+df_hpam %>%
+  group_by(cluster) %>%
+  summarise(across(where(is.numeric), mean), .groups = "drop")
+```
+Con el método H-PAM, que combina una etapa jerárquica inicial con la optimización de medoides de PAM, los resultados muestran una segmentación en tres grupos muy similar a la obtenida previamente con PAM simple. El índice silhouette promedio se mantiene en 0.17, lo que indica que la calidad de la partición sigue siendo baja y que los clusters no están claramente separados entre sí. El grupo dos es el que presenta mayor cohesión interna, con un silhouette medio de 0.27, mientras que el primero y el tercero se mantienen con valores bajos, reflejando que muchas observaciones no están asignadas de manera clara y podrían pertenecer a otros clusters.
+
+Al comparar la variable de estado del préstamo con la pertenencia a los clusters, se observa nuevamente que en los tres segmentos aparecen tanto aprobaciones como rechazos, con proporciones relativamente similares. Esto confirma que la segmentación por H-PAM, al igual que la de PAM, capta principalmente diferencias en las características financieras de los clientes pero no logra separar de manera directa la aprobación del crédito.
+
+En términos de interpretación, la estructura jerárquica inicial permitió estabilizar los medoides de partida y dio lugar a grupos de tamaño balanceado, lo que sugiere que H-PAM es útil para organizar los datos de forma más robusta que PAM cuando hay heterogeneidad en las variables numéricas. Sin embargo, el valor bajo del silhouette evidencia que los tres clusters se traslapan considerablemente y que no existe una frontera clara entre los perfiles. La conclusión es que el método jerárquico más PAM aporta estabilidad en la formación de los grupos, pero no resuelve la falta de separación entre ellos.
