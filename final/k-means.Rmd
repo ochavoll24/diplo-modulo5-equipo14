@@ -1,0 +1,188 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(e1071)    
+library(patchwork) 
+library(data.table)
+library(tidyr)
+```
+
+
+```{r}
+data <- read_csv("loan_approval_dataset.csv")
+print(head(data))
+```
+
+
+
+
+```{r}
+
+cols <- names(df)[-1]
+
+
+output_dir <- "graficos"
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+
+plot_and_save <- function(data, colname, out_dir) {
+  x <- data[[colname]]
+  
+  if (is.numeric(x)) {
+    sk <- round(skewness(x, na.rm = TRUE), 2)
+    cat(colname, "\nSkew :", sk, "\n\n")
+    
+    p_hist <- ggplot(data, aes(x = .data[[colname]])) +
+      geom_histogram(bins = 10, fill = "skyblue", color = "black") +
+      labs(y = "count", x = colname) +
+      theme_minimal(base_size = 12)
+    
+
+    p_box <- ggplot(data, aes(y = .data[[colname]])) +
+      geom_boxplot(fill = "tomato") +
+      labs(x = "", y = colname) +
+      theme_minimal(base_size = 12)
+    
+    p_final <- p_hist | p_box
+    
+    ggsave(
+      filename = file.path(out_dir, paste0(colname, "_plot.png")),
+      plot = p_final,
+      width = 12, height = 5, dpi = 300
+    )
+  } else {
+    cat(colname, " -> columna no numérica; se omite.\n\n")
+  }
+}
+
+for (col in cols) {
+  plot_and_save(df, col, output_dir)
+}
+
+
+```
+
+
+```{r}
+data_new <- data %>% select(-c(education, self_employed,loan_status))
+```
+
+
+```{r}
+data_scaled <- as.data.frame(scale(data_new))
+colnames(data_scaled) <- colnames(data_new)
+head(data_scaled)
+```
+
+
+```{r}
+
+data_scaled_copy <- copy(data_scaled)
+```
+
+
+```{r}
+
+set.seed(1)  
+sse <- numeric(9)  
+
+
+for (k in 1:9) {
+  km <- kmeans(data_scaled, centers = k, nstart = 25)
+  sse[k] <- km$tot.withinss  
+}
+
+plot(1:9, sse, type = "b", pch = 19, frame = FALSE,
+     xlab = "Número de clusters ",
+     ylab = "Total Cluster)")
+```
+
+```{r}
+library(cluster)
+
+set.seed(1)
+sc <- numeric(9)   
+
+
+for (k in 2:8) {
+  km <- kmeans(data_scaled, centers = k, nstart = 25)
+  
+
+  ss <- silhouette(km$cluster, dist(data_scaled))
+  
+  sc[k] <- mean(ss[, 3])
+}
+
+plot(2:10, sc[2:10], type = "b", pch = 19, frame = FALSE,
+     xlab = "Número de clusters (k)",
+     ylab = "Silhouette Score")
+```
+
+```{r}
+set.seed(1)  
+
+
+km <- kmeans(data_scaled, centers = 3, nstart = 25)
+
+
+data_scaled_copy <- data_scaled
+data_scaled_copy$KMeans_Labels <- km$cluster
+
+
+data_new$KMeans_Labels <- km$cluster
+```
+
+
+```{r}
+table(data_new$KMeans_Labels)
+```
+```{r}
+df_kmeans <- data_new %>%
+  group_by(KMeans_Labels) %>%
+  summarise(across(everything(), list(Mean = mean, Median = median))) %>%
+  ungroup()
+
+df_kmeans
+```
+
+```{r}
+cols_visualise <- c("no_of_dependents", "income_annum",
+                    "loan_term", "cibil_score", "residential_assets_value",
+                    "commercial_assets_value", "luxury_assets_value", "bank_asset_value")
+data_new %>%
+  select(KMeans_Labels, all_of(cols_visualise)) %>%
+  pivot_longer(-KMeans_Labels, names_to = "Variable", values_to = "Valor") %>%
+  ggplot(aes(x = factor(KMeans_Labels), y = Valor, fill = factor(KMeans_Labels))) +
+  geom_boxplot() +
+  facet_wrap(~Variable, scales = "free_y") +
+  theme_minimal(base_size = 10) +
+  labs(x = "Cluster", y = "Valor")
+```
+##Notamos diferencias muy claras ya que el primer cluster clientes con activos, ingresos y préstamos más bajos , el segundo clientes de alto poder adquisitivo ya que tinen  activos, ingresos y préstamos altos y el tercero valores intermedios , tambien podemos ver que algunas variables (cibil_score, loan_term, no_of_dependents) no discriminan bien entre clusters a comparación de otras variables como income_annum, luxury_assets_value, bank_asset_value que  sí muestran separación.
+
+
+```{r}
+data_new %>%
+  select(KMeans_Labels, loan_amount, all_of(cols_visualise)) %>%
+  pivot_longer(cols = all_of(cols_visualise),
+               names_to = "Variable", values_to = "Valor") %>%
+  ggplot(aes(x = Valor, y = loan_amount, color = factor(KMeans_Labels))) +
+  geom_point(alpha = 0.6) +
+  scale_color_brewer(palette = "Dark2") +
+  facet_wrap(~Variable, scales = "free_x") +
+  theme_minimal(base_size = 10) +
+  labs(x = NULL, y = "loan_amount", color = "Cluster")
+```
+##Podemos ver que los clusters uno , dos y tres  se superponen  en casi todas las variables , tambien se mira que no  hay fronteras claras ya que los puntos de diferentes clusters aparecen mezclados i.e por lo que K-means no logro separar a los clientes en grupos bien definidos 
+
+
+#Conclusión 
+##los clusters se mezclan bastante en el espacio de variables, lo que limita la precisión de la segmentación a pesar de que logra indentificar una segmentación deficiente  para los clientes para sus ingresos  financieros por lo que se sugiere probar con otro modelo 
