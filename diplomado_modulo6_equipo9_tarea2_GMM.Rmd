@@ -1,0 +1,575 @@
+---
+title: "Tarea 2: Clusters con Gaussian Mixed Models (GMM)"
+author: "Equipo 9 - Aprendizaje no supervisado"
+date: "2025-09-06"
+output:
+  html_document:
+    theme: flatly
+    toc: yes
+---
+
+<style type="text/css">
+.main-container {
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(tidyverse)
+library(recipes)
+library(mixtools)
+library(cluster)
+library(factoextra)
+library(clustertend)
+library(ggplot2)
+library(gridExtra)
+library(RColorBrewer)
+library(plotly)
+library(hopkins)
+library(uwot)
+
+options(scipen = 999)
+
+####### data
+
+loan_raw <- 
+readr::read_csv("loan_approval_dataset.csv")
+
+loan_db<-
+  loan_raw %>% 
+    filter( 
+    cibil_score <= 550 
+    # & loan_term <= 18
+    ) 
+
+loan_munged <-
+  loan_db %>% 
+  select(
+    -education,-self_employed,-no_of_dependents,
+    ,-loan_term
+         )
+
+loan_munged_features <- loan_munged %>% select(-loan_status)
+
+
+scaling_recipe <- recipe(~ ., data = loan_munged_features) %>%
+  step_normalize(all_numeric()) %>%
+  step_naomit(all_predictors())
+
+# Prep and bake the recipe
+loan_scaled <- scaling_recipe %>%
+  prep() %>%
+  bake(new_data = NULL)
+
+###### Functions
+
+# Function to perform GMM clustering with different parameters
+perform_gmm <- function(data, n_clusters = 2, criteria = "BIC") {
+  set.seed(30)
+  
+  # Fit Gaussian Mixture Model
+  gmm_model <- mixtools::mvnormalmixEM(data, k = n_clusters, verb = FALSE
+                                       #, maxit = 350
+                                       )
+  
+  # Get cluster assignments
+  cluster_assignments <- apply(gmm_model$posterior, 1, which.max)
+  
+  # Create results dataframe
+  results <- data %>%
+    mutate(cluster = as.factor(cluster_assignments),
+           .probability = apply(gmm_model$posterior, 1, max))
+  
+  # Return model and results
+  list(model = gmm_model, 
+       results = results, 
+       assignments = cluster_assignments,
+       bic = -2 * gmm_model$loglik + log(nrow(data)) * (n_clusters * (ncol(data) + 1) + n_clusters - 1))
+}
+
+
+
+# Function to visualize GMM results
+visualize_gmm <- function(results_data, title_suffix = "") {
+  # If more than 2 dimensions, use PCA for visualization
+  if (ncol(results_data) > 3) {  # 2 features + cluster column
+    pca_data <- prcomp(results_data[, -which(names(results_data) %in% c("cluster", ".probability"))])
+    plot_data <- data.frame(
+      PC1 = pca_data$x[, 1],
+      PC2 = pca_data$x[, 2],
+      cluster = results_data$cluster,
+      probability = results_data$.probability
+    )
+    
+    p <- ggplot(plot_data, aes(x = PC1, y = PC2, color = cluster)) +
+      geom_point(aes(alpha = probability), size = 2) +
+      scale_alpha_continuous(range = c(0.3, 1)) +
+      labs(title = paste("GMM Clustering Results", title_suffix),
+           subtitle = paste("Explained variance: PC1 =", 
+                          round(summary(pca_data)$importance[2,1]*100, 1), "%, PC2 =",
+                          round(summary(pca_data)$importance[2,2]*100, 1), "%"),
+           x = "First Principal Component",
+           y = "Second Principal Component") +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = 0.5))
+  } else {
+    # For 2D data, plot directly
+    feature_names <- names(results_data)[1:2]
+    p <- ggplot(results_data, aes_string(x = feature_names[1], y = feature_names[2], color = "cluster")) +
+      geom_point(aes(alpha = .probability), size = 2) +
+      scale_alpha_continuous(range = c(0.3, 1)) +
+      labs(title = paste("GMM Clustering Results", title_suffix)) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = 0.5))
+  }
+  
+  return(p)
+}
+
+
+calculate_metrics <- function(data, max_k = 6) {
+  metrics <- data.frame(
+    k = 1:max_k,
+    within_ss = numeric(max_k),
+    avg_silhouette = numeric(max_k),
+    gap_stat = numeric(max_k ),
+    bic = numeric(max_k )
+  )
+  
+  # Convert to matrix for some functions
+  data_matrix <- as.matrix(data)
+  
+  # Initial valuess
+  
+  metrics$avg_silhouette[1]<- NA
+    metrics$gap_stat[1]<- NA
+    metrics$bic[1]<- NA
+  
+  centroid_k1 <- colMeans(data_matrix)
+  squared_distances <- apply(data_matrix, 1, function(row) { sum((row - centroid_k1)^2) })
+  metrics$within_ss[1]<- sum(squared_distances)
+  
+
+  
+  cat("Calculating metrics for k = 2 to", max_k, "...\n")
+  
+  for (k in 2:max_k) {
+    cat("k =", k, "\n")
+    
+    # GMM for BIC and cluster assignments
+    gmm_fit <- perform_gmm(data, n_clusters = k)
+    clusters <- gmm_fit$assignments
+    
+    # Within-cluster sum of squares (using GMM assignments)
+    centroids <- aggregate(data_matrix, by = list(clusters), FUN = mean)[, -1]
+    within_ss <- 0
+    for (i in unique(clusters) ) {
+      cluster_points <- data_matrix[clusters == i, , drop = FALSE]
+      centroid <- centroids[i, ]
+      within_ss <- within_ss + sum(apply(cluster_points, 1, function(x) sum((x - centroid)^2)))
+    }
+    metrics$within_ss[k] <- within_ss
+    
+    # Average silhouette width
+    if (k < nrow(data)) {
+      sil <- cluster::silhouette(clusters, dist(data_matrix))
+      metrics$avg_silhouette[k] <- mean(sil[, 3])
+    } else {
+      metrics$avg_silhouette[k] <- NA
+    }
+    
+    # BIC from GMM
+    metrics$bic[k] <- gmm_fit$bic
+  }
+  
+  # Gap statistic (using k-means for consistency with standard implementation)
+  cat("Calculating Gap statistic...\n")
+  set.seed(123)
+  gap_stat <- cluster::clusGap(data_matrix, FUN = kmeans, K.max = max_k, B = 30)
+  metrics$gap_stat <- gap_stat$Tab[1:max_k, "gap"] 
+  
+  return(list(metrics = metrics, gap_result = gap_stat))
+}
+
+```
+
+
+# Introducción.
+
+Nuestro equipo ha estado analizando los datos de “loan approvals”, que contienen información sobre la aprobación o el rechazo de préstamos bancarios. Después de realizar el análisis exploratorio de datos y probar técnicas de reducción de dimensión, identificamos un desbalance en la distribución de los casos debido a lo siguiente:
+
+1. Más del 99% de los créditos solicitados por personas con un score CIBIL mayor a 550 puntos fueron aprobados.
+2. Más del 99% de los créditos solicitados por personas con un score CIBIL menor a 550 y con una fecha de término mayor a 4 fueron rechazados.
+
+Al eliminar los casos descritos en los puntos 1 y 2, nuestra base de datos se reduce a aproximadamente 350 observaciones, en las que se presenta una mezcla proporcional entre aprobados y rechazados. Esto nos permitió notar que la cantidad de observaciones disponibles no es la ideal para la aplicación de algoritmos de clustering.
+
+Ambos puntos se ilustran en la siguiente gráfica:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.align='center'}
+
+unique_values <- sort(unique(loan_raw$loan_term))
+
+loan_raw %>% 
+  ggplot() + 
+  geom_point(aes(
+     x = loan_term
+    ,y = cibil_score
+    ,color = loan_status
+  )) +
+  scale_x_continuous(breaks = unique_values) +
+  scale_y_continuous(breaks = seq(0,1000,by = 100) )
+
+```
+
+
+# Objetivo
+
+Considerando los puntos descritos en la introducción, el objetivo de este ejercicio es analizar las observaciones con puntaje menor a 550 de "cibil" (~1,700 observaciones) y buscar agrupamientos (clusters) entre ellas utilizando GMM. Una vez identificados los clusters, se evaluará cuáles presentan una mayor tendencia a la aprobación y se compararán con aquellos que muestran un comportamiento más balanceado (más rechazo). El propósito de este análisis es comprender qué variables influyen en una mayor probabilidad de rechazo del crédito. Finalmente, se realizará una breve comparación con las variables relevantes obtenidas en un modelo de clasificación binaria de machine learning, con el fin de identificar coincidencias o al menos consistencia entre ambos enfoques.
+
+
+# Tendencia a clustering de los datos
+
+En esta sección presentaremos dos resultados que nos permitirán medir la tendencia de agrupamiento en nuestros datos: el estadístico de Hopkins y el método VAT (Visual Assessment of cluster Tendency).
+
+## Estadísitico de Hopkings
+
+El resultado obtenido fue de aproximadamente 0.99, lo que indica que nuestros datos presentan una estructura regular y no muestran una clara tendencia hacia el agrupamiento.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+set.seed(24)
+
+hopkins_stat <- 
+  hopkins::hopkins( #loan_munged_features
+    loan_scaled )
+
+cat("Hopkins Statistic Result:", round(hopkins_stat, 4), "\n")
+
+```
+
+
+## Análisis visual de tedencia a Cluster (Visual Assessment of Cluster Tendency)
+
+Notamos algunos sectores con tendencia a clustering.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.align='center'}
+
+vat_plot <- fviz_dist(dist(loan_scaled), 
+                      show_labels = FALSE,
+                      lab_size = 8) +
+  ggtitle("Visual Assessment of Cluster Tendency (VAT)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14))
+
+print(vat_plot)
+
+```
+
+
+# Clusterización aplicando GMM
+
+En esta sección calcularemos algunas métricas para evaluar el comportamiento del modelo GMM con diferentes números de clusters. Posteriormente, ajustaremos el modelo con el número de clusters considerado “ideal” y comentaremos los resultados obtenidos.
+
+## Medidas para la selección de número de clusters
+
+Las siguientes métricas se calcularon considerando un máximo de 4 clusters, ya que, debido a la cantidad de observaciones disponibles, la matriz resultó singular; es decir, el modelo no puede estimarse para un número mayor de clusters.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+cluster_testings <- 4
+
+validation_results <- calculate_metrics(loan_scaled, max_k = cluster_testings)
+
+metrics_df <- validation_results$metrics
+
+```
+
+
+### Gráfico de codo (elbow chart)
+
+Notamos una buena caída en la varianza acumulada al rededor de *K = 3 clusters*.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.align='center'}
+
+ggplot(metrics_df, aes(x = k, y = within_ss)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(color = "red", size = 3) +
+  labs(title = "Gráfico de codo para seleccionar número de clusters",
+       x = "Number of Clusters (k)",
+       y = "Within-cluster Sum of Squares") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(breaks = 2:cluster_testings)
+
+```
+
+### Gráfico de "Silhouette average"
+
+Notamos una buena caída en el indicador Silhouette para *K = 4 clusters*.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.align='center'}
+
+
+metrics_df %>% 
+  filter( !is.na(avg_silhouette)) %>% 
+ggplot( aes(x = k, y = avg_silhouette)) +
+  geom_line(color = "darkgreen", size = 1) +
+  geom_point(color = "red", size = 3) +
+  labs(title = "Average Silhouette Width",
+       x = "Number of Clusters (k)",
+       y = "Average Silhouette Width") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_x_continuous(breaks = 2:cluster_testings)
+
+```
+
+
+### Gráfico del estadístico "GAP"
+
+El estadístico GAP llega a su "máximo" para *K = 3 clusters*.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.align='center'}
+
+fviz_gap_stat(validation_results$gap_result) +
+  labs(title = "Gap Statistic Method") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+### Estadísticos BIC
+
+La mayor diferencia en BIC se logra de 2 a 3 clusters, por lo que concluímos que *K = 3* es una buena elección.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+data.frame(
+  clusters = 1:cluster_testings,
+  BIC = metrics_df$bic
+)
+
+```
+
+## Clustering con GMM a 3 clusters.
+
+Con base en los resultados obtenidos en la sección anterior, decidimos ajustar nuestro modelo GMM utilizando 3 clusters.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+cluster_options <- 3
+
+gmm_results <- perform_gmm(loan_scaled, n_clusters = cluster_options)
+
+visualize_gmm(
+  gmm_results$results, title_suffix = paste("clusters= ",cluster_options) )
+
+
+```
+
+## Clusters vs. variable objetivo "loan_status"
+
+Notamos que el cluster 1 (rojo) presenta una ligera sobre-representación de aprobaciones: 14% en comparación con el 10% observado en el total de los datos.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE , fig.align='center' }
+
+get_gmm_results <- gmm_results$results
+
+get_gmm_results %>% 
+  cbind(
+    loan_db %>% select(loan_status)  
+  ) %>% 
+  select(cluster,loan_status) %>% 
+  mutate(
+    aux = 1
+    ,cluster = as.numeric(cluster)
+    # , cluster = case_when(
+    #   cluster == 1 ~ 'cluster_a',
+    #   cluster == 2 ~ 'cluster_b',
+    #   TRUE ~ 'error' )
+    ) %>% 
+  pivot_wider(
+    names_from = loan_status,
+    values_from = aux,
+    values_fn = ~sum(.x)
+  ) %>% 
+  rowwise() %>% 
+  mutate(
+        row_total = sum(c( Approved , Rejected)), 
+        Approved_percent = round(Approved / row_total,4) * 100,
+        Rejected_percent = round(Rejected / row_total,4) * 100
+      ) %>%
+      ungroup() %>% 
+  arrange(cluster) %>% 
+  select(cluster,Approved,Approved_percent,Rejected,Rejected_percent)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.align='center'}
+
+get_pca_data <- prcomp(get_gmm_results[, -which(names(get_gmm_results) %in% c("cluster", ".probability"))])
+
+get_plot_data <- data.frame(
+      PC1 = get_pca_data$x[, 1],
+      PC2 = get_pca_data$x[, 2],
+      cluster = get_gmm_results$cluster,
+      probability = get_gmm_results$.probability
+    )
+    
+# plot
+
+get_plot_data %>% 
+    cbind(
+    loan_db %>% select(loan_status)  
+  ) %>% 
+  ggplot(aes(
+    x = PC1
+    , y = PC2
+    , color = loan_status
+    )) +
+  geom_point(aes(alpha = probability), size = 2) +
+  scale_alpha_continuous(range = c(0.3, 1)) +
+  facet_wrap(~cluster
+             , scales = 'free_x'
+             )+
+  labs(
+    title = "GMM Clustering Results"
+    ,subtitle = paste("Explained variance: PC1 =", 
+                          round(summary(get_pca_data)$importance[2,1]*100, 1), "%, PC2 =",
+                          round(summary(get_pca_data)$importance[2,2]*100, 1), "%"),
+           x = "First Principal Component",
+           y = "Second Principal Component"
+    ) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+## Clusters en las variables
+
+Al comparar el comportamiento del cluster 1 frente al resto de los clusters en cada variable (feature), observamos lo siguiente:
+
+1. Montos de préstamo mucho más pequeños en comparación con el resto de la muestra.
+2. Ingresos menores, aunque aún significativos en relación con el monto solicitado del préstamo.
+3. Los activos commerciales del cluster 1 parecen estar más presentes que en el resto de los clusters.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.align='center' }
+
+df1<-
+gmm_results$results %>% 
+  select(cluster) %>% 
+  cbind( loan_db ) %>%
+  mutate(
+    cluster_group = if_else(
+      as.numeric(cluster) ==1 ,"cluster_1","other_cluster"
+    )
+  ) %>% 
+    select(
+      -loan_status
+           #, -cluster
+           ,-cluster_group
+         ,-self_employed,-education
+         ) 
+
+df1 %>%
+  pivot_longer(
+    !cluster,
+ names_to = "Variable", values_to="Score") %>%
+  filter(cluster == '1') %>%
+  ggplot()+
+  geom_histogram(aes(
+    x = Score
+    ,fill = cluster
+  ), color = "black" #,binwidth=1
+  )+
+  facet_wrap(~Variable, scales = "free", ncol= 3) +
+  #scale_color_viridis_d(option = "plasma", end = .7) +
+  labs(title = "Variables Distribution") +
+  theme_light()+
+  labs(title = "Distribuciones por variable para el cluster 1")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.align='center' }
+
+df1<-
+gmm_results$results %>% 
+  select(cluster) %>% 
+  cbind( loan_db ) %>%
+  mutate(
+    cluster_group = if_else(
+      as.numeric(cluster) ==1 ,"cluster_1","other_cluster"
+    )
+  ) %>% 
+    select(
+      #-loan_status
+           #, -cluster
+           ,-cluster_group
+         ,-self_employed,-education
+         ) 
+
+df1 %>% 
+  pivot_longer(
+    !c(cluster, loan_status), 
+ names_to = "Variable", values_to="Score") %>%
+  filter(cluster == '1') %>% 
+  ggplot(mapping = aes(Score, fill = loan_status)) +
+  geom_density(color = "white") +
+  facet_wrap(~Variable, scales = "free", ncol= 3) +
+  scale_color_viridis_d(option = "plasma", end = .7) +
+  labs(title = "Variables Distribution") +
+  theme_light()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  labs(title = "Distribuciones por variable para el cluster 1 - Separando Aprobados y Rechazados")
+
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=8, fig.align='center'  }
+
+df1<-
+gmm_results$results %>% 
+  select(cluster) %>% 
+  cbind( loan_db ) %>%
+  mutate(
+    cluster_group = if_else(
+      as.numeric(cluster) ==1 ,"cluster_1","other_cluster"
+    )
+  ) %>% 
+    select(-loan_status
+           #, -cluster
+           ,-cluster_group
+         ,-self_employed,-education
+         ) 
+
+df1 %>% 
+  pivot_longer(
+    !cluster, 
+ names_to = "Variable", values_to="Score") %>%
+    ggplot(mapping = aes(Score, fill = cluster)) +
+  geom_density(color = "white") +
+  facet_wrap(~Variable, scales = "free", ncol= 3) +
+  scale_color_viridis_d(option = "plasma", end = .7) +
+  labs(title = "Variables Distribution") +
+  theme_light()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  labs(title = "Comparación a través de densidad")
+
+```
+
+# Conclusiones
+
+Debido a la baja cantidad de datos con una distribución equilibrada entre aprobaciones y rechazos, no fue posible profundizar en el análisis para identificar con precisión los factores de decisión del crédito. Sin embargo, al analizar las diferencias del cluster 1, que presenta una ligera sobre-representación de aprobaciones, concluimos que solicitar un monto de crédito bajo, en proporción adecuada a los ingresos declarados, puede favorecer la aprobación, especialmente cuando se acompaña de un CIBIL score cercano a 550 puntos.
+
+Estas conclusiones coinciden al ajustar un modelo XGBoost de clasificación binaria, donde las variables con importancia superiror a la media fueron: monto del crédito, monto de ingresos y monto de activos comerciales. 
